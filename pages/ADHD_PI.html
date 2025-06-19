@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>moveableText</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        video {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: 100;
+        }
+
+        canvas {
+            background: #fff;
+            display: block;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .video-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_1.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="video-container">
+        <video id="introVideo" autoplay>
+            <source src="../assets/video/exam.mp4" type="video/mp4">
+            您的浏览器不支持 HTML5 视频。
+        </video>
+    </div>
+    <canvas style="display: none;"></canvas>
+
+    <script>
+        let interactiveCanvas = null; // 用于保存Canvas实例
+
+        class Char {
+            constructor(originX, originY, char, fontSize) {
+                this.originX = originX;
+                this.originY = originY;
+                this.x = this.#random(0, 1000);
+                this.y = this.#random(500, 560);
+                this.char = char;
+                this.size = fontSize;
+            }
+            #random(min, max) {
+                return Math.random() * (max - min) + min;
+            }
+            moved(vx, vy) {
+                this.x += vx;
+                this.y += vy;
+            }
+            moveTo(x, y, curve = "linear") {
+                const dx = x - this.x;
+                const dy = y - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                let force = 1;
+                switch (curve) {
+                    case "easeIn":
+                        force = distance / 100;
+                        break;
+                    case "RevEaseIn":
+                        force = -distance / 100;
+                        break;
+                    case "easeInOut":
+                        force = distance / 100;
+                        if (force > 1) force = distance / 100;
+                        if (force < -1) force = 100 / distance;
+                        break;
+                    case "linear":
+                        force = 1;
+                        break;
+                }
+                const angle = Math.atan2(dy, dx);
+                const vx = Math.cos(angle) * force;
+                const vy = Math.sin(angle) * force;
+                this.moved(vx, vy);
+            }
+        }
+
+        class Canvas {
+            constructor(element) {
+                if (!element || element.nodeName !== 'CANVAS') {
+                    throw new Error(`canvas element is required, but received ${element ? element.nodeName : 'null'}`);
+                }
+                this.canvas = element;
+                this.ctx = this.canvas.getContext('2d');
+                this.ratio = window.devicePixelRatio || 1;
+                this.baseSize = Math.min(window.innerWidth, window.innerHeight);
+                this.fontSize = this.baseSize * 0.025 * this.ratio;
+                this.charWidth = this.fontSize * 1.2;
+                this.#updateCanvasSize();
+                this.#init();
+                window.addEventListener('resize', this.#handleResize.bind(this));
+            }
+            #updateCanvasSize() {
+                this.cWidth = this.canvas.width = window.innerWidth * this.ratio;
+                this.cHeight = this.canvas.height = window.innerHeight * this.ratio;
+            }
+            #handleResize() {
+                this.ratio = window.devicePixelRatio || 1;
+                this.baseSize = Math.min(window.innerWidth, window.innerHeight);
+                this.fontSize = this.baseSize * 0.018 * this.ratio;
+                this.charWidth = this.fontSize * 1.2;
+                this.#updateCanvasSize();
+                this.#initTextPos();
+            }
+            #init() {
+                this.ctx.font = `${this.fontSize}px MyFont`;
+                this.string = CONTENT;
+                this.#initTextPos();
+                this.mouseX = -1000; // 初始位置设为屏幕外
+                this.mouseY = -1000;
+                this.#loop();
+            }
+            #initTextPos() {
+                const config = {
+                    marginLeft: this.fontSize * 0.8,
+                    marginTop: this.fontSize * 1.5,
+                    lineHeight: this.fontSize * 1.8,
+                }
+                const maxCols = Math.floor((this.cWidth - config.marginLeft * 2) / this.charWidth);
+                let rowsCount = 0;
+                let colsCount = 0;
+                let length = 0;
+                this.charArr = [];
+
+                for (let i = 0; i < this.string.length; i++) {
+                    let char = this.string[i];
+                    if (char === '\n') {
+                        rowsCount++;
+                        colsCount = 0;
+                        continue;
+                    }
+                    if (colsCount >= maxCols) {
+                        rowsCount++;
+                        colsCount = 0;
+                    }
+                    const x = config.marginLeft + colsCount * this.charWidth;
+                    const y = config.marginTop + rowsCount * config.lineHeight + this.fontSize;
+                    this.charArr[length] = new Char(x, y, char, this.fontSize);
+                    colsCount++;
+                    length++;
+                }
+            }
+            draw() {
+                for (const char of this.charArr) {
+                    let dx = this.mouseX - char.x;
+                    let dy = this.mouseY - char.y;
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+                    if (distance < 300 * this.ratio) {
+                        char.moveTo(this.mouseX, this.mouseY, "RevEaseIn");
+                    } else {
+                        char.moveTo(char.originX, char.originY, "easeIn");
+                    }
+                }
+
+                this.ctx.clearRect(0, 0, this.cWidth, this.cHeight);
+                this.ctx.font = `${this.fontSize}px MyFont`;
+                for (const char of this.charArr) {
+                    this.ctx.fillText(char.char, char.x, char.y);
+                }
+            }
+            #loop() {
+                this.draw();
+                requestAnimationFrame(this.#loop.bind(this));
+            }
+        }
+
+        const CONTENT = `本来想谈《吕氏春秋》，但近日尘心大动，多看了几眼电视和报纸，回头再谈什么《吕氏春秋》就觉得不合时宜。时之宜也的日子应是有一天巴黎来人，宣布将《吕氏春秋》列入世界纸质文化遗产，可惜到那时也轮不到我谈了，自然有记者把闷得发了霉的专家翻出来晾晒，一边诚恳地问：《吕氏春秋》是啥东东？
+这个日子暂时不会来，因为巴黎方面还没有把印在纸上的文字列为世界文化遗产的意思，毕竟，咱们暂时还没能发明出一种办法，像拆掉一座建筑或解散一个剧院一样让一部书在天地间转瞬消失。
+当然，咱们同时也发明了一些办法，力图使某座建筑或某个剧院不致消失，其中之一，就是把洋人请来，请他们转一转、看一看，然后宣布，这可不只是你们家的，这是全人类的，可不能乱糟蹋。
+这个办法迄今大致有效。事实上，该办法用在其他方面也同样有效，比如，今天就有小两口打了架鸡飞狗跳，二人分别摔门离家，轮流致电本老哥，互相诋毁、控诉，决意一拍而两散。老哥俺心中窃喜，自知晚饭有了着落也，遂喝道：都给我回家，做某菜，备某酒，待老哥前去了断。
+进了门，见夫妻如乌眼之鸡，酒菜却已备好，本老哥大刺刺上坐，边撮边吆喝，翻来复去，不过两句话：
+尔知不知他（她）乃举世无双之宝贝？！
+尔知不知尔甩了他（她）众人立时狂喜而抢之？
+如是者重复一百二十多遍，二人终于相视无语凝咽，目光且甜且酸且热，如看一大金砖，本老哥酒足饭饱，悄然溜之，走在街上，叹曰：
+噫！本老哥之于该夫妻，正如巴黎之于咱们和遗产，有些事别人不吆喝，自己便要胡折腾也。
+但话说回来，该办法有效，也有限。俺去日本时，事先备了份“世界文化遗产” 名录，按图索骥，游园子逛庙，见处处修缮精心，也不见穷凶极恶大开发之状；只是日本人终究是“小”，比较缺乏世界眼光，所到之处，几乎无人提起巴黎认为此地如何如何是个宝，要吹牛也只说此乃敝国“文化财”，言语之间，是一副天长地久、海枯石烂的模样，别人的吆喝倒是可有，也可没有。
+“天长地久”、“海枯石烂”，看电视也看到了一个咱们的例子，那是在北京，一户人家为明末咱们民族的英雄袁崇焕守墓，代代相传，三百余年以迄于今，结果呢，终于还是海枯了、石烂了、拆迁了，被赶进八竿子打不着的楼房里去了。
+电视里，最后的守墓者涕泪横流，哀痛欲绝，我看着她，无话可说。
+说什么呢？如果咱们已经失去了对永恒、对长久、对先人、对自身之来源的起码的尊重，那么，咱们也只好收拾一点先人的遗产献给“世界”算了。`;
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const video = document.getElementById('introVideo');
+            const canvas = document.querySelector('canvas');
+
+            video.addEventListener('ended', function () {
+                document.querySelector('.video-container').style.display = 'none';
+                window.parent.postMessage('webcam', '*');
+                canvas.style.display = 'block';
+                document.fonts.ready.then(() => {
+                    interactiveCanvas = new Canvas(canvas); // 创建实例并保存
+                });
+            });
+        });
+
+        // 监听来自父页面的视线坐标
+        window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            console.log(data);
+            if (data.startsWith('gaze_')) {
+                const coordinates = data.substring(5);
+                const [xStr, yStr] = coordinates.split('|');
+                const x = parseFloat(xStr);
+                const y = parseFloat(yStr);
+
+                if (interactiveCanvas) {
+                    // 转换坐标并更新位置
+                    interactiveCanvas.mouseX = x * interactiveCanvas.ratio;
+                    interactiveCanvas.mouseY = y * interactiveCanvas.ratio;
+                }
+            }
+        });
+        
+        setTimeout(() => {
+            window.parent.postMessage('page_adhd_pi_finish', '*');
+        }, 30000);
+    </script>
+</body>
+
+</html>

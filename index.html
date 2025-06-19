@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100%;
+            font-family: 'MyFont', sans-serif;
+        }
+
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_2.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        .dot {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background-color: blue;
+            transform: translate(-50%, -50%);
+            transition: width 0.2s, height 0.2s, background-color 0.2s;
+            pointer-events: none;
+            will-change: transform, width, height, background-color;
+        }
+
+        .iframe-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .frame {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: none;
+            opacity: 0;
+            transform: translateX(0);
+            transition: all 1s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: opacity;
+        }
+
+        .frame.active {
+            opacity: 1;
+            z-index: 2;
+        }
+
+        .frame.exit {
+            opacity: 0;
+        }
+
+        .fade-enter {
+            opacity: 0;
+        }
+
+        #calibrationInstruction {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 1000;
+            display: none;
+            will-change: transform;
+        }
+
+        #calibrationPoint {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            background: #ff4757;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 1001;
+            will-change: transform, background-color;
+        }
+
+        #gazePoint {
+            position: fixed;
+            width: 15px;
+            height: 15px;
+            background: #5e6ad2;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 999;
+            pointer-events: none;
+            will-change: transform;
+        }
+
+        .camera-preview {
+            position: absolute;
+            top: -9999px;
+            left: -9999px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #webcam {
+            width: 320px;
+            height: 240px;
+        }
+    </style>
+    <script src="/assets/js/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="/assets/js/control_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="/assets/js/drawing_utils.js"
+        crossorigin="anonymous"></script>
+    <script src="/assets/js/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@magenta/image@0.2.1/dist/magentaimage.min.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <div class="camera-preview" style="display: none;">
+            <video id="webcam" autoplay playsinline muted></video>
+        </div>
+        <div style="display: none;">
+            <button id="webcamButton" class="mdc-button">启用摄像头</button>
+            <button id="calibrateButton" class="mdc-button">开始校准</button>
+            <button id="clearCalibrationButton" class="mdc-button">重新校准</button>
+        </div>
+        <div id="calibrationInstruction">
+            请注视红点后按空格键<br>（5/5）
+        </div>
+        <!-- <div id="dot" class="dot" style="z-index: 99999999;"></div> -->
+        <div id="calibrationPoint"></div>
+        <div id="gazePoint"></div>
+    </div>
+
+    <div class="iframe-container" id="container">
+        <iframe class="frame" id="frame1"></iframe>
+        <iframe class="frame" id="frame2"></iframe>
+    </div>
+
+    <script type="module">
+        // 性能优化：使用 RAF 管理器避免重复调用
+        class RAFManager {
+            constructor() {
+                this.isRunning = false;
+                this.callbacks = new Set();
+            }
+
+            add(callback) {
+                this.callbacks.add(callback);
+                if (!this.isRunning) {
+                    this.start();
+                }
+            }
+
+            remove(callback) {
+                this.callbacks.delete(callback);
+                if (this.callbacks.size === 0) {
+                    this.stop();
+                }
+            }
+
+            start() {
+                if (this.isRunning) return;
+                this.isRunning = true;
+                this.tick();
+            }
+
+            stop() {
+                this.isRunning = false;
+            }
+
+            tick() {
+                if (!this.isRunning) return;
+
+                this.callbacks.forEach(callback => {
+                    try {
+                        callback();
+                    } catch (err) {
+                        console.error('RAF callback error:', err);
+                    }
+                });
+
+                if (this.isRunning) {
+                    requestAnimationFrame(() => this.tick());
+                }
+            }
+        }
+
+        const rafManager = new RAFManager();
+
+        // 性能优化：节流函数
+        function throttle(func, delay) {
+            let lastCall = 0;
+            return function (...args) {
+                const now = Date.now();
+                if (now - lastCall >= delay) {
+                    lastCall = now;
+                    return func.apply(this, args);
+                }
+            };
+        }
+
+        // 性能优化：防抖函数
+        function debounce(func, delay) {
+            let timeoutId;
+            return function (...args) {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+
+        //iFrame控制
+        const iframeManager = (() => {
+            let currentFrame = null;
+            let nextFrame = null;
+
+            const init = () => {
+                const frames = document.querySelectorAll('.frame');
+                currentFrame = frames[0];
+                nextFrame = frames[1];
+            };
+
+            const preload = async (url) => {
+                return new Promise((resolve) => {
+                    nextFrame.src = url;
+                    nextFrame.onload = () => {
+                        injectAPI(nextFrame);
+                        resolve();
+                    };
+                    // 添加错误处理
+                    nextFrame.onerror = () => {
+                        console.error('Failed to load iframe:', url);
+                        resolve();
+                    };
+                });
+            };
+
+            const injectAPI = (frame) => {
+                try {
+                    frame.contentWindow.parentHost = {
+                        send: (data) => console.log('收到子页面数据:', data),
+                        switchPage: (url, animation) => switchPage(url, animation)
+                    };
+                } catch (err) {
+                    console.warn('Failed to inject API:', err);
+                }
+            };
+
+            const switchPage = async (url, animation = 'fade') => {
+                if (url == null) {
+                    return
+                }
+                await preload(url);
+                nextFrame.className = `frame ${animation}-enter`;
+                currentFrame.classList.add('exit');
+                nextFrame.classList.add('active');
+
+                setTimeout(() => {
+                    currentFrame.classList.remove('active', 'exit');
+                    [currentFrame, nextFrame] = [nextFrame, currentFrame];
+                }, 600);
+            };
+
+            const getCurrentFrame = () => {
+                return currentFrame;
+            };
+
+            return { init, switchPage, getCurrentFrame };
+        })();
+
+        //iFrame初始化
+        iframeManager.init();
+
+        //-----------------面部识别+眼动跟踪------------------
+        import vision from "./assets/js/mediapipe_tasks-vision@0.10.3.js";
+        const { FaceLandmarker, FaceDetector, FilesetResolver } = vision;
+
+        const gazePointElement = document.getElementById("gazePoint");
+        const calibrationPointElement = document.getElementById("calibrationPoint");
+        const calibrationInstructionElement = document.getElementById("calibrationInstruction");
+
+        let faceDetector;
+        let faceLandmarker;
+        let debug = true;
+        let face_model_load_state = false;
+        let iris_model_load_state = false;
+        let hand_model_load_state = false;
+        let runningMode = "VIDEO";
+        let calibrateButton;
+        let clearCalibrationButton;
+        let webcamRunning = false;
+        const videoWidth = 480;
+
+        // 性能优化：缓存 DOM 元素
+        const video = document.getElementById("webcam");
+
+        // --- Gaze Calculation Variables ---
+        let smoothedGazeX = window.innerWidth / 2;
+        let smoothedGazeY = window.innerHeight / 2;
+        const SMOOTHING_FACTOR = 1;
+
+        // Default gaze parameters (will be overwritten by calibration)
+        let calibratedGazeParams = {
+            minRelX: 0.35,
+            maxRelX: 0.65,
+            minRelY: 0.35,
+            maxRelY: 0.65,
+            invertX: true,
+            invertY: false
+        };
+
+        // --- Calibration Variables ---
+        let isCalibrating = false;
+        let calibrationState = "idle";
+        let currentCalibrationPointIndex = 0;
+        const CALIBRATION_SAMPLES_PER_POINT = 60;
+        let samplesCollectedThisPoint = 0;
+        let accumulatedRelX = 0;
+        let accumulatedRelY = 0;
+        let calibrationDataEye = [];
+
+        const CALIBRATION_POINT_SCREEN_COORDS = [
+            { x: 0.05, y: 0.05 },
+            { x: 0.95, y: 0.05 },
+            { x: 0.95, y: 0.95 },
+            { x: 0.05, y: 0.95 }
+        ];
+
+        // 性能优化：缓存计算结果
+        const landmarkCache = new Map();
+        const CACHE_DURATION = 16; // 约1帧的时间
+
+        async function createFaceLandmarker() {
+            try {
+                const filesetResolver = await FilesetResolver.forVisionTasks("/assets/wasm");
+                faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: {
+                        modelAssetPath: `./assets/module/face_landmarker.task`,
+                        delegate: "GPU"
+                    },
+                    outputFaceBlendshapes: false, // 性能优化：禁用不需要的输出
+                    outputFacialTransformationMatrixes: false,
+                    runningMode,
+                    numFaces: 1
+                });
+                console.log("FaceLandmarker created successfully");
+                loadCalibrationData();
+            } catch (err) {
+                console.error("Failed to create FaceLandmarker:", err);
+            }
+        }
+        createFaceLandmarker();
+
+        const initializefaceDetector = async () => {
+            try {
+                const vision = await FilesetResolver.forVisionTasks("/assets/wasm");
+                faceDetector = await FaceDetector.createFromOptions(vision, {
+                    baseOptions: {
+                        modelAssetPath: `/assets/module/blaze_face_short_range.tflite`,
+                        delegate: "GPU"
+                    },
+                    runningMode: runningMode
+                });
+            } catch (err) {
+                console.error("Failed to initialize face detector:", err);
+            }
+        };
+        initializefaceDetector();
+
+        function hasGetUserMedia() {
+            return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        }
+
+        if (hasGetUserMedia()) {
+            calibrateButton = document.getElementById("calibrateButton");
+            clearCalibrationButton = document.getElementById("clearCalibrationButton");
+
+            calibrateButton?.addEventListener("click", startCalibration);
+            clearCalibrationButton?.addEventListener("click", clearCalibration);
+        } else {
+            console.warn("getUserMedia() is not supported by your browser");
+        }
+
+        // 性能优化：使用更高效的摄像头管理
+        async function face_enableCam(event) {
+            if (!faceDetector) {
+                console.warn("Face Detector is still loading. Please try again..");
+                return;
+            }
+
+            if (webcamRunning === true) {
+                webcamRunning = false;
+                rafManager.remove(face_predictWebcam);
+                await stopVideoStream();
+            } else {
+                webcamRunning = true;
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            width: 640,
+                            height: 480,
+                            frameRate: { ideal: 30, max: 30 } // 性能优化：限制帧率
+                        }
+                    });
+                    video.srcObject = stream;
+                    rafManager.add(face_predictWebcam);
+                } catch (err) {
+                    console.error("Error accessing webcam: ", err);
+                    webcamRunning = false;
+                }
+            }
+        }
+
+        async function enableCam(event) {
+            if (!faceLandmarker) {
+                console.log("Wait! faceLandmarker not loaded yet.");
+                return;
+            }
+
+            if (webcamRunning === true) {
+                webcamRunning = false;
+                if (calibrateButton) calibrateButton.style.display = "none";
+                if (clearCalibrationButton) clearCalibrationButton.style.display = "none";
+                await stopVideoStream();
+                gazePointElement.style.display = "none";
+                stopCalibration();
+                rafManager.remove(predictWebcam);
+            } else {
+                webcamRunning = true;
+                if (calibrateButton) calibrateButton.style.display = "inline-block";
+                if (clearCalibrationButton) clearCalibrationButton.style.display = "inline-block";
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            width: 640,
+                            height: 480,
+                            frameRate: { ideal: 30, max: 30 }
+                        }
+                    });
+                    video.srcObject = stream;
+                    rafManager.add(predictWebcam);
+                } catch (err) {
+                    console.error("Error accessing webcam: ", err);
+                    webcamRunning = false;
+                    if (calibrateButton) calibrateButton.style.display = "none";
+                    if (clearCalibrationButton) clearCalibrationButton.style.display = "none";
+                }
+            }
+        }
+
+        // 性能优化：统一的视频流停止函数
+        async function stopVideoStream() {
+            if (video.srcObject) {
+                video.pause();
+                await new Promise(resolve => setTimeout(resolve, 50));
+                video.srcObject.getTracks().forEach(track => {
+                    track.stop();
+                    track.enabled = false;
+                });
+                video.srcObject = null;
+            }
+        }
+
+        // 性能优化：缓存唯一索引计算
+        const uniqueIndicesCache = new Map();
+        function getUniqueLandmarkIndices(connectorConstant) {
+            if (!connectorConstant) return [];
+
+            const cacheKey = connectorConstant.toString();
+            if (uniqueIndicesCache.has(cacheKey)) {
+                return uniqueIndicesCache.get(cacheKey);
+            }
+
+            const result = [...new Set(connectorConstant.flatMap(conn => [conn.start, conn.end]))];
+            uniqueIndicesCache.set(cacheKey, result);
+            return result;
+        }
+
+        function getAveragePosition(landmarks, indices) {
+            if (!landmarks || indices.length === 0) return null;
+            let sumX = 0, sumY = 0, sumZ = 0;
+            let count = 0;
+            for (const index of indices) {
+                if (landmarks[index]) {
+                    sumX += landmarks[index].x;
+                    sumY += landmarks[index].y;
+                    sumZ += landmarks[index].z;
+                    count++;
+                }
+            }
+            return count > 0 ? { x: sumX / count, y: sumY / count, z: sumZ / count } : null;
+        }
+
+        function getMinMaxBoundingBox(landmarks, indices) {
+            if (!landmarks || indices.length === 0) return null;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            let count = 0;
+            for (const index of indices) {
+                if (landmarks[index]) {
+                    minX = Math.min(minX, landmarks[index].x);
+                    maxX = Math.max(maxX, landmarks[index].x);
+                    minY = Math.min(minY, landmarks[index].y);
+                    maxY = Math.max(maxY, landmarks[index].y);
+                    count++;
+                }
+            }
+            return count > 0 ? { minX, maxX, minY, maxY } : null;
+        }
+
+        // 性能优化：缓存虹膜位置计算结果
+        let lastIrisCalculationTime = 0;
+        let cachedIrisPosition = null;
+
+        function getRawRelativeIrisPosition(faceLandmarks) {
+            const now = performance.now();
+            if (now - lastIrisCalculationTime < CACHE_DURATION && cachedIrisPosition) {
+                return cachedIrisPosition;
+            }
+
+            if (!faceLandmarks || faceLandmarks.length === 0) return null;
+
+            const leftIrisIndices = getUniqueLandmarkIndices(FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS);
+            const rightIrisIndices = getUniqueLandmarkIndices(FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS);
+            const leftEyeOutlineIndices = getUniqueLandmarkIndices(FaceLandmarker.FACE_LANDMARKS_LEFT_EYE);
+            const rightEyeOutlineIndices = getUniqueLandmarkIndices(FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE);
+
+            const leftIrisCenter = getAveragePosition(faceLandmarks, leftIrisIndices);
+            const rightIrisCenter = getAveragePosition(faceLandmarks, rightIrisIndices);
+            const leftEyeBox = getMinMaxBoundingBox(faceLandmarks, leftEyeOutlineIndices);
+            const rightEyeBox = getMinMaxBoundingBox(faceLandmarks, rightEyeOutlineIndices);
+
+            let relativeIrisX = [];
+            let relativeIrisY = [];
+
+            if (leftIrisCenter && leftEyeBox) {
+                const eyeWidth = leftEyeBox.maxX - leftEyeBox.minX;
+                const eyeHeight = leftEyeBox.maxY - leftEyeBox.minY;
+                if (eyeWidth > 0.001 && eyeHeight > 0.001) {
+                    relativeIrisX.push((leftIrisCenter.x - leftEyeBox.minX) / eyeWidth);
+                    relativeIrisY.push((leftIrisCenter.y - leftEyeBox.minY) / eyeHeight);
+                }
+            }
+            if (rightIrisCenter && rightEyeBox) {
+                const eyeWidth = rightEyeBox.maxX - rightEyeBox.minX;
+                const eyeHeight = rightEyeBox.maxY - rightEyeBox.minY;
+                if (eyeWidth > 0.001 && eyeHeight > 0.001) {
+                    relativeIrisX.push((rightIrisCenter.x - rightEyeBox.minX) / eyeWidth);
+                    relativeIrisY.push((rightIrisCenter.y - rightEyeBox.minY) / eyeHeight);
+                }
+            }
+
+            if (relativeIrisX.length === 0) {
+                cachedIrisPosition = null;
+                return null;
+            }
+
+            const avgRelX = relativeIrisX.reduce((a, b) => a + b, 0) / relativeIrisX.length;
+            const avgRelY = relativeIrisY.reduce((a, b) => a + b, 0) / relativeIrisY.length;
+
+            cachedIrisPosition = { avgRelX, avgRelY };
+            lastIrisCalculationTime = now;
+            return cachedIrisPosition;
+        }
+
+        // 性能优化：节流视线计算和DOM更新
+        const throttledGazeUpdate = throttle((x, y) => {
+            gazePointElement.style.left = `${x}px`;
+            gazePointElement.style.top = `${y}px`;
+        }, 16); // 约60fps
+
+        const throttledGazeMessage = throttle((x, y) => {
+            try {
+                const currentFrame = iframeManager.getCurrentFrame();
+                if (currentFrame?.contentWindow) {
+                    currentFrame.contentWindow.postMessage(`gaze_${x}|${y}`, '*');
+                }
+            } catch (err) {
+                // 忽略跨域错误
+            }
+        }, 33); // 约30fps
+
+        function calculateGaze(faceLandmarks) {
+            if (isCalibrating && calibrationState !== 'collecting_samples') {
+                gazePointElement.style.display = "none";
+                return;
+            }
+
+            const rawIrisPos = getRawRelativeIrisPosition(faceLandmarks);
+            if (!rawIrisPos) {
+                gazePointElement.style.display = "none";
+                return;
+            }
+
+            if (isCalibrating && calibrationState === 'collecting_samples') {
+                accumulatedRelX += rawIrisPos.avgRelX;
+                accumulatedRelY += rawIrisPos.avgRelY;
+                samplesCollectedThisPoint++;
+
+                // 性能优化：减少DOM操作频率
+                if (samplesCollectedThisPoint % 5 === 0) {
+                    const flashColor = (samplesCollectedThisPoint % 10) < 5 ? "lime" : "red";
+                    calibrationPointElement.style.backgroundColor = flashColor;
+                }
+
+                if (samplesCollectedThisPoint >= CALIBRATION_SAMPLES_PER_POINT) {
+                    const avgCalibRelX = accumulatedRelX / samplesCollectedThisPoint;
+                    const avgCalibRelY = accumulatedRelY / samplesCollectedThisPoint;
+                    calibrationDataEye.push({ avgRelX: avgCalibRelX, avgRelY: avgCalibRelY });
+
+                    currentCalibrationPointIndex++;
+                    if (currentCalibrationPointIndex < CALIBRATION_POINT_SCREEN_COORDS.length) {
+                        setupNextCalibrationPoint();
+                    } else {
+                        finalizeCalibration();
+                    }
+                }
+                return;
+            }
+
+            const { avgRelX, avgRelY } = rawIrisPos;
+            const params = calibratedGazeParams;
+
+            let normEyeX = (avgRelX - params.minRelX) / (params.maxRelX - params.minRelX);
+            let normEyeY = (avgRelY - params.minRelY) / (params.maxRelY - params.minRelY);
+
+            normEyeX = Math.max(0, Math.min(1, normEyeX));
+            normEyeY = Math.max(0, Math.min(1, normEyeY));
+
+            let screenNormX = params.invertX ? (1.0 - normEyeX) : normEyeX;
+            let screenNormY = params.invertY ? (1.0 - normEyeY) : normEyeY;
+
+            const targetGazeX = screenNormX * window.innerWidth;
+            const targetGazeY = screenNormY * window.innerHeight;
+
+            smoothedGazeX = SMOOTHING_FACTOR * targetGazeX + (1 - SMOOTHING_FACTOR) * smoothedGazeX;
+            smoothedGazeY = SMOOTHING_FACTOR * targetGazeY + (1 - SMOOTHING_FACTOR) * smoothedGazeY;
+
+            throttledGazeUpdate(smoothedGazeX, smoothedGazeY);
+            throttledGazeMessage(smoothedGazeX, smoothedGazeY);
+        }
+
+        function startCalibration() {
+            if (!webcamRunning) {
+                alert("Please enable the webcam first.");
+                return;
+            }
+            isCalibrating = true;
+            calibrationDataEye = [];
+            currentCalibrationPointIndex = 0;
+            gazePointElement.style.display = "none";
+            calibrationInstructionElement.style.display = "block";
+            if (calibrateButton) {
+                calibrateButton.innerText = "CALIBRATING...";
+                calibrateButton.disabled = true;
+            }
+            setupNextCalibrationPoint();
+        }
+
+        function setupNextCalibrationPoint() {
+            calibrationState = "waiting_for_input";
+            samplesCollectedThisPoint = 0;
+            accumulatedRelX = 0;
+            accumulatedRelY = 0;
+
+            const point = CALIBRATION_POINT_SCREEN_COORDS[currentCalibrationPointIndex];
+            calibrationPointElement.style.left = `${point.x * 100}%`;
+            calibrationPointElement.style.top = `${point.y * 100}%`;
+            calibrationPointElement.style.backgroundColor = "red";
+            calibrationPointElement.style.display = "block";
+            calibrationInstructionElement.innerHTML = `请集中注意力在红点处 (${currentCalibrationPointIndex + 1}/${CALIBRATION_POINT_SCREEN_COORDS.length})`;
+            setTimeout(() => {
+                calibrationState = "collecting_samples";
+            }, 1000);
+        }
+
+        function finalizeCalibration() {
+            isCalibrating = false;
+            calibrationState = "idle";
+            calibrationPointElement.style.display = "none";
+            calibrationInstructionElement.style.display = "none";
+            gazePointElement.style.display = "block";
+
+            if (calibrateButton) {
+                calibrateButton.innerText = "RECALIBRATE";
+                calibrateButton.disabled = false;
+            }
+
+            if (calibrationDataEye.length !== CALIBRATION_POINT_SCREEN_COORDS.length) {
+                console.error("Calibration data mismatch. Using defaults.");
+                calibratedGazeParams = { minRelX: 0.35, maxRelX: 0.65, minRelY: 0.35, maxRelY: 0.65, invertX: true, invertY: false };
+                saveCalibrationData();
+                return;
+            }
+
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            calibrationDataEye.forEach(p => {
+                minX = Math.min(minX, p.avgRelX);
+                maxX = Math.max(maxX, p.avgRelX);
+                minY = Math.min(minY, p.avgRelY);
+                maxY = Math.max(maxY, p.avgRelY);
+            });
+
+            calibratedGazeParams.minRelX = minX;
+            calibratedGazeParams.maxRelX = maxX;
+            calibratedGazeParams.minRelY = minY;
+            calibratedGazeParams.maxRelY = maxY;
+
+            const avgLeftScreenEyeX = (calibrationDataEye[0].avgRelX + calibrationDataEye[3].avgRelX) / 2;
+            const avgRightScreenEyeX = (calibrationDataEye[1].avgRelX + calibrationDataEye[2].avgRelX) / 2;
+            calibratedGazeParams.invertX = avgLeftScreenEyeX > avgRightScreenEyeX;
+
+            const avgTopScreenEyeY = (calibrationDataEye[0].avgRelY + calibrationDataEye[1].avgRelY) / 2;
+            const avgBottomScreenEyeY = (calibrationDataEye[2].avgRelY + calibrationDataEye[3].avgRelY) / 2;
+            calibratedGazeParams.invertY = avgTopScreenEyeY > avgBottomScreenEyeY;
+
+            console.log("Calibration complete. New params:", calibratedGazeParams);
+
+            try {
+                const currentFrame = iframeManager.getCurrentFrame();
+                if (currentFrame?.contentWindow) {
+                    currentFrame.contentWindow.postMessage('finish_calibration', '*');
+                }
+            } catch (err) {
+                // 忽略跨域错误
+            }
+
+            saveCalibrationData();
+        }
+
+        function stopCalibration() {
+            isCalibrating = false;
+            calibrationState = "idle";
+            calibrationPointElement.style.display = "none";
+            calibrationInstructionElement.style.display = "none";
+            if (calibrateButton) {
+                calibrateButton.innerText = "START CALIBRATION";
+                calibrateButton.disabled = false;
+            }
+        }
+
+        function saveCalibrationData() {
+            try {
+                localStorage.setItem("faceGazeCalibrationParams", JSON.stringify(calibratedGazeParams));
+                console.log("Calibration data saved.");
+            } catch (err) {
+                console.error("Failed to save calibration data:", err);
+            }
+        }
+
+        function loadCalibrationData() {
+            try {
+                const storedData = localStorage.getItem("faceGazeCalibrationParams");
+                if (storedData) {
+                    calibratedGazeParams = JSON.parse(storedData);
+                    console.log("Loaded calibration data:", calibratedGazeParams);
+                    if (calibrateButton) calibrateButton.innerText = "RECALIBRATE";
+                } else {
+                    console.log("No saved calibration data found. Using defaults.");
+                }
+            } catch (err) {
+                console.error("Failed to load calibration data:", err);
+            }
+        }
+
+        function clearCalibration() {
+            try {
+                localStorage.removeItem("faceGazeCalibrationParams");
+                calibratedGazeParams = {
+                    minRelX: 0.35, maxRelX: 0.65, minRelY: 0.35, maxRelY: 0.65,
+                    invertX: true, invertY: false
+                };
+                console.log("Calibration data cleared. Reset to defaults.");
+                alert("Calibration data cleared. Using default settings. Recalibrate for best results.");
+                if (calibrateButton) calibrateButton.innerText = "START CALIBRATION";
+            } catch (err) {
+                console.error("Failed to clear calibration data:", err);
+            }
+        }
+
+        // 性能优化：使用独立的时间戳和结果缓存
+        let lastFaceDetectionTime = 0;
+        let lastGazeDetectionTime = 0;
+        let results = undefined;
+        let lastResults = undefined;
+
+        function face_predictWebcam() {
+            if (!webcamRunning || !video.videoWidth) return;
+
+            let startTimeMs = performance.now();
+            if (video.currentTime !== lastFaceDetectionTime) {
+                lastFaceDetectionTime = video.currentTime;
+
+                try {
+                    const detections = faceDetector.detectForVideo(video, startTimeMs).detections;
+                    if (detections.length > 0) {
+                        const firstFace = detections[0];
+                        const nose = firstFace.keypoints[2];
+                        const message = {
+                            type: "face_point",
+                            x: nose.x,
+                            y: nose.y,
+                        };
+
+                        try {
+                            const currentFrame = iframeManager.getCurrentFrame();
+                            if (currentFrame?.contentWindow) {
+                                currentFrame.contentWindow.postMessage(message, '*');
+                            }
+                        } catch (err) {
+                            // 忽略跨域错误
+                        }
+                    }
+                } catch (err) {
+                    console.warn("Face detection error:", err);
+                }
+            }
+        }
+
+        function predictWebcam() {
+            if (!webcamRunning || !video.videoWidth) return;
+
+            let startTimeMs = performance.now();
+            if (video.currentTime !== lastGazeDetectionTime) {
+                lastGazeDetectionTime = video.currentTime;
+
+                try {
+                    results = faceLandmarker.detectForVideo(video, startTimeMs);
+                } catch (err) {
+                    console.warn("Gaze detection error:", err);
+                    return;
+                }
+            }
+
+            if (results && results.faceLandmarks) {
+                for (const landmarks of results.faceLandmarks) {
+                    calculateGaze(landmarks);
+                }
+            } else {
+                if (!isCalibrating) gazePointElement.style.display = "none";
+            }
+        }
+
+        // 性能优化：防抖窗口调整事件
+        const debouncedWindowResize = debounce(() => {
+            smoothedGazeX = window.innerWidth / 2;
+            smoothedGazeY = window.innerHeight / 2;
+            if (gazePointElement && gazePointElement.style.display === 'block' && !isCalibrating) {
+                gazePointElement.style.left = `${smoothedGazeX}px`;
+                gazePointElement.style.top = `${smoothedGazeY}px`;
+            }
+            if (isCalibrating) {
+                alert("Window resized during calibration. Please restart calibration.");
+                stopCalibration();
+            }
+        }, 250);
+
+        window.addEventListener('load', () => {
+            smoothedGazeX = window.innerWidth / 2;
+            smoothedGazeY = window.innerHeight / 2;
+            if (gazePointElement) {
+                gazePointElement.style.left = `${smoothedGazeX}px`;
+                gazePointElement.style.top = `${smoothedGazeY}px`;
+            }
+        });
+
+        window.addEventListener('resize', debouncedWindowResize);
+
+        //-----------------面部识别+眼动跟踪结束------------------
+
+        
+
+        //-----------------预先加载模型流程------------------
+        let isPreloading = false;
+
+        // 性能优化：改进的模型预加载流程
+        async function preloadModels() {
+            if (isPreloading) return;
+            isPreloading = true;
+
+            console.log('开始预加载模型...');
+
+            try {
+                // 1. 预加载脸部检测模型
+                console.log('预加载脸部检测模型...');
+                const stream1 = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 320, height: 240 } // 性能优化：使用较小分辨率
+                });
+                const tempVideo1 = document.createElement('video');
+                tempVideo1.srcObject = stream1;
+                tempVideo1.muted = true;
+
+                await new Promise(resolve => {
+                    tempVideo1.onloadedmetadata = () => {
+                        face_enableCam();
+                        setTimeout(() => {
+                            face_enableCam();
+                            stream1.getTracks().forEach(track => track.stop());
+                            resolve();
+                        }, 800); // 减少等待时间
+                    };
+                });
+
+                // 2. 预加载虹膜检测模型
+                console.log('预加载虹膜检测模型...');
+                const stream2 = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 320, height: 240 }
+                });
+                const tempVideo2 = document.createElement('video');
+                tempVideo2.srcObject = stream2;
+                tempVideo2.muted = true;
+
+                await new Promise(resolve => {
+                    tempVideo2.onloadedmetadata = () => {
+                        enableCam();
+                        setTimeout(() => {
+                            enableCam();
+                            stream2.getTracks().forEach(track => track.stop());
+                            resolve();
+                        }, 800);
+                    };
+                });
+
+
+                console.log('所有模型预加载完成');
+
+                setTimeout(() => {
+                    try {
+                        const currentFrame = iframeManager.getCurrentFrame();
+                        if (currentFrame?.contentWindow) {
+                            currentFrame.contentWindow.postMessage('finish_webcam', '*');
+                        }
+                    } catch (err) {
+                        // 忽略跨域错误
+                    }
+                }, 800);
+
+            } catch (err) {
+                console.error('模型预加载失败:', err);
+            }
+        }
+
+        //-----------------预先加载模型流程结束------------------
+        let img_url = "/assets/img/1.jpg";
+        let after_img_url = "";
+        /**
+         * 图像风格化处理函数
+         * @param {string} contentBlobUrl - 内容图片的Blob URL
+         * @returns {Promise<string>} - 返回风格化后的图片Blob URL
+         */
+        async function stylizeImage(contentBlobUrl) {
+            // 初始化模型和画布
+            const model = new mi.ArbitraryStyleTransferNetwork();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // 加载风格图片（固定路径）
+            const styleImg = new Image();
+            styleImg.crossOrigin = 'Anonymous';
+            styleImg.src = 'assets/img/style.jpg';
+
+            // 加载内容图片
+            const contentImg = new Image();
+            contentImg.crossOrigin = 'Anonymous';
+            contentImg.src = contentBlobUrl;
+
+            // 等待所有资源加载完成
+            await Promise.all([
+                model.initialize(),
+                new Promise((resolve) => { styleImg.onload = resolve; }),
+                new Promise((resolve) => { contentImg.onload = resolve; })
+            ]);
+
+            // 设置画布尺寸
+            canvas.width = contentImg.width;
+            canvas.height = contentImg.height;
+
+            // 执行风格化
+            const imageData = await model.stylize(contentImg, styleImg);
+            ctx.putImageData(imageData, 0, 0);
+
+            // 将画布转换为Blob并生成URL
+            return new Promise((resolve) => {
+                canvas.toBlob((blob) => {
+                    const stylizedUrl = URL.createObjectURL(blob);
+                    resolve(stylizedUrl);
+                }, 'image/jpeg'); // 可修改为'image/png'等其他格式
+            });
+        }
+        // 摄像头帧捕获与传输函数
+        async function captureAndSendFrame() {
+            const video = document.getElementById('webcam');
+
+            // 确保视频已就绪
+            if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+                console.warn('视频流未就绪');
+                return;
+            }
+
+            try {
+                // 创建离屏Canvas
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                // 设置Canvas尺寸与视频源一致
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+
+                // 绘制镜像画面（适配摄像头镜像效果）
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                
+                const blob = await new Promise((resolve, reject) => {
+                    canvas.toBlob(blob => {
+                        if (blob) resolve(blob);
+                        else reject(new Error('Canvas toBlob failed'));
+                    }, 'image/jpeg', 0.8);
+                });
+                
+                img_url = URL.createObjectURL(blob);
+                    
+                // 内存清理
+                canvas.width = 0;
+                canvas.height = 0;
+            } catch (err) {
+                console.error('帧捕获失败:', err);
+                throw new Error('FRAME_CAPTURE_ERROR');
+            }
+        }
+        function get_img_url() {
+            return [img_url, after_img_url];
+        }
+        window.get_img_url = get_img_url;
+
+        //-----------------父子页面通信------------------
+        const Page_config = {
+            1: {
+                particleSize: 0.01,
+                baseMotion: 0.01,
+                cloudScale: 70.0,
+                positionOffset: { x: 0, y: 25, z: 0 },
+                rotation: { x: 0.5, y: 0.01 },
+                cameraAnimation: {
+                    enabled: true,
+                    speed: 2,
+                    points: [
+                        { x: 0, y: 0, z: 50 },
+                        { x: -20, y: 0, z: 70 }
+                    ],
+                    ease: "sine"
+                },
+                textOptions: [
+                    "Chapter　1",
+                    "接下来，您将身处考试的场景",
+                    "体验ADHD患者的阅读体验"
+                ],
+                currentTextIndex: 0,
+                textFadeDuration: 1000,
+                characterDelay: 100,
+                xyzFile: '/assets/pcloud/ljc.xyz'
+            },
+            2: {
+                particleSize: 0.4,
+                baseMotion: 0.01,
+                cloudScale: 100.0,
+                positionOffset: { x: 0, y: 25, z: 0 },
+                rotation: { x: 0.0, y: 0 },
+                cameraAnimation: {
+                    enabled: true,
+                    speed: 0.5,
+                    points: [
+                        { x: 50, y: 10, z: -70 },
+                        { x: -50, y: 0, z: 70 }
+                    ],
+                    ease: "sine"
+                },
+                textOptions: [
+                    "Chapter　2",
+                    "ADHD患者往往在交流上感到困难",
+                    "接下来请您将屏幕上的关键词组成流利的句子"
+                ],
+                currentTextIndex: 0,
+                textFadeDuration: 1000,
+                characterDelay: 100,
+                xyzFile: '/assets/pcloud/2.xyz'
+            },
+            3: {
+                particleSize: 0.25,
+                baseMotion: 0.01,
+                cloudScale: 100.0,
+                positionOffset: { x: 0, y: 25, z: 0 },
+                rotation: { x: 0.5, y: 0.01 },
+                cameraAnimation: {
+                    enabled: true,
+                    speed: 1,
+                    points: [
+                        { x: 0, y: 0, z: 50 },
+                        { x: -20, y: 0, z: 70 }
+                    ],
+                    ease: "sine"
+                },
+                textOptions: [
+                    "Chapter　3",
+                    "在ADHD的世界拍张照吧！"
+                ],
+                currentTextIndex: 0,
+                textFadeDuration: 1000,
+                characterDelay: 100,
+                xyzFile: '/assets/pcloud/3.xyz'
+            },
+        };
+
+        const Pages_list = [
+            `pages/setting.html`,
+            `pages/chapter.html?config=${encodeURIComponent(JSON.stringify(Page_config[1]))}`,
+            `pages/ADHD_PI.html`,
+            `pages/chapter.html?config=${encodeURIComponent(JSON.stringify(Page_config[2]))}`,
+            `pages/ADHD_PH.html`,
+            `pages/chapter.html?config=${encodeURIComponent(JSON.stringify(Page_config[3]))}`,
+            `pages/ADHD_C.html`,
+            `pages/ADHD_INFO.html`,
+            `pages/finish.html`,
+        ];
+
+        let Pages_index = 0;
+        iframeManager.switchPage("pages/loading.html", 'fade');
+
+        // 性能优化：防抖消息处理
+        const debouncedMessageHandler = debounce((data) => {
+            console.log('Debounced message:', data);
+        }, 100);
+
+        window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+
+            const data = event.data;
+
+            // 处理简单消息
+            switch (data) {
+                case "next_page_PI":
+                    gazePointElement.style.display = "none";
+                    iframeManager.switchPage("pages/ADHD_PI.html", 'fade');
+                    break;
+                case "webcam":
+                    enableCam();
+                    break;
+                case "webcam_face":
+                    face_enableCam();
+                    setTimeout(async () => {  // 👉 改为async函数
+                        // 等待捕获完成后再进行风格化
+                        await captureAndSendFrame().catch(console.warn);
+
+                        // 使用新捕获的img_url进行风格化
+                        const stylizedUrl = await stylizeImage(img_url);
+                        after_img_url = stylizedUrl;
+
+                    }, 5000);
+
+                    break;
+                case "webcam_hands":
+                    // initializeHandTracking();
+                    // toggleHandTracking();
+                    break;
+                case "load_module_now":
+                    preloadModels();
+                    break;
+                case "startcalibration":
+                    startCalibration();
+                    break;
+                case "video_frame":
+                    handleVideoFrameInjection();
+                    break;
+                case 'page_loading_finish':
+                    if (document.readyState === 'complete') {
+                        iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                        Pages_index++;
+                    } else {
+                        try {
+                            const currentFrame = iframeManager.getCurrentFrame();
+                            if (currentFrame?.contentWindow) {
+                                currentFrame.contentWindow.postMessage('action_wait', '*');
+                            }
+                        } catch (err) {
+                            // 忽略跨域错误
+                        }
+                    }
+                    break;
+                case 'page_setting_finish':
+                case 'page_chapter_finish':
+                    iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                    Pages_index++;
+                    break;
+                case 'page_adhd_pi_finish':
+                    enableCam();
+                    iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                    Pages_index++;
+                    break;
+                case 'page_adhd_ph_finish':
+                    // toggleHandTracking();
+                    iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                    Pages_index++;
+                    break;
+                case 'page_adhd_c_finish':
+                    face_enableCam();
+                    iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                    Pages_index++;
+                    break;
+                case 'page_adhd_info_finish':
+                    iframeManager.switchPage(Pages_list[Pages_index], 'fade');
+                    Pages_index++;
+                    break;
+                case 'finish_text_loaded':
+                    const currentFrame = iframeManager.getCurrentFrame();
+                    const message = {
+                        type: "img",
+                        url: img_url,
+                    };
+                    currentFrame.contentWindow.postMessage(message, '*');
+                    break;
+            }
+
+            debouncedMessageHandler(data);
+        });
+
+        // 性能优化：视频帧注入函数
+        function handleVideoFrameInjection() {
+            const currentFrame = iframeManager.getCurrentFrame();
+            const maxAttempts = 3;
+            const retryInterval = 1000; // 减少重试间隔
+            let attempts = 0;
+
+            const tryInjectStream = () => {
+                    attempts++;
+                    try {
+                        if (!video.srcObject) {
+                            throw new Error('父页面视频流未准备好');
+                        }
+
+                        const childVideo = currentFrame.contentDocument?.getElementById('webcam');
+                        if (!childVideo) {
+                            throw new Error('子页面video元素不存在');
+                        }
+
+                        childVideo.srcObject = video.srcObject;
+                        childVideo.muted = true;
+                        childVideo.style.display = 'block';
+
+                        return childVideo.play().then(() => {
+                            console.log('视频流注入成功');
+                        }).catch(err => {
+                            throw new Error(`播放失败: ${err.message}`);
+                        });
+
+                    } catch (err) {
+                        if (attempts >= maxAttempts) {
+                            console.error(`视频流注入失败，已尝试 ${attempts} 次`, err);
+                            return;
+                        }
+                        console.warn(`第 ${attempts} 次尝试失败，${retryInterval}ms后重试...`);
+                        setTimeout(tryInjectStream, retryInterval);
+                    }
+            };
+
+            tryInjectStream();
+        }
+
+    </script>
+</body>
+
+</html>

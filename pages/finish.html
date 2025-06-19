@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            color: white;
+            font-family: 'MyFont', sans-serif;
+        }
+
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_2.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+
+        #video-bg {
+            position: fixed;
+            right: 0;
+            bottom: 0;
+            min-width: 100%;
+            min-height: 100%;
+            z-index: -1;
+        }
+
+        .gradient-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 1) 70%);
+            pointer-events: none;
+        }
+
+        .shape {
+            position: absolute;
+            opacity: 0.7;
+            animation: float 20s linear infinite;
+        }
+
+        @keyframes float {
+            from {
+                transform: translate(0, 0) rotate(0deg);
+            }
+
+            to {
+                transform: translate(var(--tx), var(--ty)) rotate(360deg);
+            }
+        }
+
+        #text-container {
+            position: fixed;
+            top: 10%;
+            left: 5%;
+            font-size: 2em;
+            line-height: 1.5;
+            z-index: 1000;
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: white;
+            vertical-align: middle;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .line {
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+
+        /* Added reference list style */
+        #reference-list {
+            position: fixed;
+            left: 5%;
+            bottom: 10%;
+            font-size: 0.8em;
+            line-height: 1.4;
+            z-index: 1000;
+            opacity: 0;
+            max-width: 300px;
+            border-radius: 5px;
+            transition: opacity 1s;
+        }
+
+        #reference-list.show {
+            opacity: 0.8;
+        }
+        .image-label {
+            position: absolute;
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 0.8em;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+            background: rgba(0,0,0,0.3);
+            padding: 5px 15px;
+            border-radius: 15px;
+            z-index: 2;
+            white-space: nowrap;
+        }
+        .image-preview {
+            position: fixed;
+            bottom: 100px;
+            right: 100px;
+            width: 250px;
+            height: 150px;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s, transform 0.5s;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1001;
+        }
+
+        .image-preview.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+
+<body>
+    <video autoplay muted loop id="video-bg">
+        <source src="/assets/video/eye.mp4" type="video/mp4">
+    </video>
+    <div class="gradient-overlay"></div>
+    <div id="text-container"></div>
+    <!-- Added reference list -->
+    <div id="reference-list">
+        参考文献/数据<br>
+        https://www.statista.com/topics/5079/attention-deficit-hyperactivity-disorder-adhd-in-the-us<br>
+        https://en.wikipedia.org/wiki/Attention_deficit_hyperactivity_disorder<br>
+        世界 ADHD 联盟的国际共识声明：208 条循证结论
+    </div>
+
+    <script>
+        // 随机生成几何图形
+        function createShape() {
+            const shape = document.createElement('div');
+            const size = Math.random() * 50 + 20;
+            const color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+
+            shape.className = 'shape';
+            shape.style.width = size + 'px';
+            shape.style.height = size + 'px';
+            shape.style.backgroundColor = color;
+            shape.style.left = Math.random() * window.innerWidth + 'px';
+            shape.style.top = Math.random() * window.innerHeight + 'px';
+
+            // 随机运动方向
+            const angle = Math.random() * Math.PI * 2;
+            shape.style.setProperty('--tx', Math.cos(angle) * 2000 + 'px');
+            shape.style.setProperty('--ty', Math.sin(angle) * 2000 + 'px');
+
+            // 随机形状
+            if (Math.random() > 0.5) {
+                shape.style.clipPath = 'polygon(50% 0%, 0% 100%, 100% 100%)';
+            } else if (Math.random() > 0.5) {
+                shape.style.borderRadius = '50%';
+            }
+
+            document.body.appendChild(shape);
+        }
+
+        // 文字显示系统
+        const textLines = [
+            "ADHD：注意缺陷多动障碍",
+            "主要表现为难以专注、过度活跃、交流困难等",
+            "对于健全人而言",
+            "任何不能被直接看见的痛苦都很难被承认并重视",
+            "当下，AI赋予了我们全新的认知能力",
+            "让这个网站能够以交互的方式呈现ADHD患者的视角"
+        ];
+
+        const textContainer = document.getElementById('text-container');
+        let currentLine = 0;
+
+        function typeWriter() {
+            if (currentLine >= textLines.length) {
+                if (window.parent) {
+                    window.parent.postMessage('finish_text_loaded', '*');
+                }
+                document.getElementById('reference-list').classList.add('show');
+                return;
+            }
+
+            const lineDiv = document.createElement('div');
+            lineDiv.className = 'line';
+            textContainer.appendChild(lineDiv);
+
+            let charIndex = 0;
+            const currentText = textLines[currentLine];
+
+            function typeCharacter() {
+                if (charIndex < currentText.length) {
+                    lineDiv.innerHTML = currentText.substring(0, charIndex + 1) + '<span class="cursor"></span>';
+                    charIndex++;
+                    setTimeout(typeCharacter, 100);
+                } else {
+                    lineDiv.innerHTML = currentText; // 移除光标
+                    lineDiv.style.opacity = '1';
+                    currentLine++;
+                    setTimeout(() => {
+                        typeWriter();
+                    }, currentLine === textLines.length ? 1000 : 500); // 最后一行多停留1秒
+                }
+            }
+
+            // 启动淡入效果
+            setTimeout(() => {
+                lineDiv.style.opacity = '1';
+                typeCharacter();
+            }, 100);
+        }
+
+        // 初始化
+        setInterval(createShape, 3000);
+        setTimeout(typeWriter, 1000); // 延迟1秒开始显示文字
+
+        // 窗口大小变化时保持视频比例
+        window.addEventListener('resize', () => {
+            const video = document.getElementById('video-bg');
+            video.style.width = window.innerWidth + 'px';
+            video.style.height = window.innerHeight + 'px';
+        });
+
+       window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            if (data.type == "img") {
+                // 移除旧容器逻辑保持不变...
+
+                // 创建新容器
+                const container = document.createElement('div');
+                container.className = 'image-preview';
+
+                // 文字标签
+                const label = document.createElement('div');
+                label.className = 'image-label';
+                label.textContent = '与ADHD世界合影';
+                container.appendChild(label);
+
+                // 图片容器
+                const imgContainer = document.createElement('div');
+                imgContainer.style.position = 'relative';
+                imgContainer.style.width = '100%';
+                imgContainer.style.height = '100%';
+
+                // 原始图片层
+                const originalImg = new Image();
+                originalImg.style.cssText = `
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            top: 0;
+            left: 0;
+        `;
+
+                // 遮罩处理层（使用Canvas）
+                const maskCanvas = document.createElement('canvas');
+                maskCanvas.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transition: opacity 0.3s;
+            opacity: 1;
+        `;
+
+                // 加载并处理遮罩图片
+                const processMask = async () => {
+                    try {
+                        const maskImg = await loadImage(window.parent.get_img_url()[1]);
+                        console.log(window.parent.get_img_url()[1]);
+                        // 设置Canvas尺寸
+                        maskCanvas.width = maskImg.naturalWidth;
+                        maskCanvas.height = maskImg.naturalHeight;
+
+                        // 绘制并处理像素
+                        const ctx = maskCanvas.getContext('2d');
+                        ctx.drawImage(maskImg, 0, 0);
+
+                        const imageData = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+                        const data = imageData.data;
+
+                        // 处理透明度
+                        for (let i = 0; i < data.length; i += 4) {
+                            if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0) {
+                                data[i + 3] = 0; // 设置透明
+                            }
+                        }
+
+                        ctx.putImageData(imageData, 0, 0);
+                    } catch (error) {
+                        console.error('遮罩加载失败:', error);
+                    }
+                };
+
+                // 鼠标交互
+                container.addEventListener('mouseenter', () => {
+                    maskCanvas.style.opacity = '0';
+                    label.textContent = '平常的相片！';
+                });
+
+                container.addEventListener('mouseleave', () => {
+                    maskCanvas.style.opacity = '1';
+                    label.textContent = '与ADHD世界合影';
+                });
+
+                // 加载流程
+                originalImg.onload = async () => {
+                    // 加载并处理遮罩
+                    await processMask();
+
+                    // 添加元素到DOM
+                    imgContainer.appendChild(originalImg);
+                    imgContainer.appendChild(maskCanvas);
+                    container.appendChild(imgContainer);
+                    document.body.appendChild(container);
+
+                    // 触发入场动画
+                    setTimeout(() => container.classList.add('active'), 50);
+                };
+                
+                originalImg.src = window.parent.get_img_url()[0];
+                // window.parent.stylizeImage(originalImg.src).then(blobUrl => {
+                //     console.log('Blob URL:', blobUrl); 
+                // });
+            }
+        });
+
+        // 封装的图片加载方法
+        function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+    </script>
+</body>
+
+</html>

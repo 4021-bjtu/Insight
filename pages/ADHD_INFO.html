@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADHD展示</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_2.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'MyFont', sans-serif;
+        }
+
+        body {
+            background-color: #000;
+            color: #e0e7ff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            height: 100vh;
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .column {
+            flex: 1;
+            min-width: 300px;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 左侧图片轮播样式 */
+        .image-carousel {
+            height: 100%;
+            width: 100%;
+            position: relative;
+        }
+
+        .carousel-item {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: transform 1.2s ease-in-out, opacity 1.2s ease-in-out;
+            opacity: 0;
+            transform: translateY(100%);
+            background-color: #000;
+        }
+
+        .carousel-item.active {
+            opacity: 1;
+            transform: translateY(0);
+            z-index: 2;
+        }
+
+        .carousel-item.prev {
+            opacity: 0;
+            transform: translateY(-100%);
+            z-index: 1;
+        }
+
+        .person-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            position: absolute;
+            filter: brightness(0.7);
+        }
+
+        .person-info {
+            text-align: center;
+            padding: 0 15px;
+            z-index: 2;
+            max-width: 80%;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 30px;
+            border-radius: 10px;
+        }
+
+        .person-name {
+            font-size: 2.5rem;
+            color: #ffffff;
+            margin-bottom: 15px;
+            text-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+        }
+
+        .person-desc {
+            font-size: 1.4rem;
+            color: #ffffff;
+            line-height: 1.6;
+            text-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+        }
+
+        /* 右侧文字轮播样式 */
+        .fact-carousel {
+            height: 100%;
+            width: 100%;
+            position: relative;
+            background-color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fact-item {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            text-align: center;
+            transition: opacity 1.5s ease-in-out;
+            opacity: 0;
+            z-index: 1;
+        }
+
+        .fact-item.active {
+            opacity: 1;
+            z-index: 2;
+        }
+
+        .fact-icon {
+            font-size: 4rem;
+            color: rgb(214, 214, 214);
+            margin-bottom: 40px;
+            animation: pulse 2s infinite;
+        }
+
+        .fact-content {
+            font-size: 2rem;
+            line-height: 1.7;
+            margin-bottom: 40px;
+            color: #ffffff;
+            max-width: 800px;
+        }
+
+        .fact-source {
+            font-style: italic;
+            color: #d5d5d5;
+            font-size: 1.2rem;
+            margin-top: 30px;
+        }
+
+        /* 动画效果 */
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.1);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+                height: auto;
+                min-height: 100vh;
+            }
+
+            .column {
+                height: 50vh;
+            }
+
+            .person-name {
+                font-size: 1.8rem;
+            }
+
+            .person-desc {
+                font-size: 1.1rem;
+            }
+
+            .fact-content {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- 左侧：名人图片轮播 -->
+        <div class="column">
+            <div class="image-carousel">
+                <div class="carousel-item active">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Albert_Einstein_Head.jpg/960px-Albert_Einstein_Head.jpg"
+                        alt="阿尔伯特·爱因斯坦" class="person-image">
+                    <div class="person-info">
+                        <h3 class="person-name">阿尔伯特·爱因斯坦</h3>
+                        <p class="person-desc">理论物理学家，相对论创立者。童年时表现出ADHD特征，难以适应传统教育体系。</p>
+                    </div>
+                </div>
+                <div class="carousel-item">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/06/Francesco_Melzi_-_Portrait_of_LeonardoFXD2.jpg/500px-Francesco_Melzi_-_Portrait_of_LeonardoFXD2.jpg"
+                        alt="列奥纳多·达·芬奇" class="person-image">
+                    <div class="person-info">
+                        <h3 class="person-name">列奥纳多·达·芬奇</h3>
+                        <p class="person-desc">注意力分散使得列奥纳多·达芬奇成为在许多方面都有成就的天才。</p>
+                    </div>
+                </div>
+                <div class="carousel-item">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ed/Justin_Timberlake_by_Gage_Skidmore_2.jpg/960px-Justin_Timberlake_by_Gage_Skidmore_2.jpg"
+                        alt="贾斯汀·汀布莱克" class="person-image">
+                    <div class="person-info">
+                        <h3 class="person-name">贾斯汀·汀布莱克</h3>
+                        <p class="person-desc">著名歌手、演员和制作人。公开谈论过自己的ADHD诊断，并将其转化为创造力。</p>
+                    </div>
+                </div>
+                <div class="carousel-item">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/7f/Emma_Watson_2013.jpg/250px-Emma_Watson_2013.jpg"
+                        alt="艾玛·沃特森" class="person-image">
+                    <div class="person-info">
+                        <h3 class="person-name">艾玛·沃特森</h3>
+                        <p class="person-desc">演员、活动家。在牛津大学学习期间被诊断出ADHD，并公开分享自己的经历。</p>
+                    </div>
+                </div>
+                <div class="carousel-item">
+                    <img src="/assets/img/1.jpg" alt="总结图片" class="person-image" id="last-image">
+                    <div class="person-info">
+                        <h3 class="person-name">结尾</h3>
+                        <p class="person-desc">即便ADHD患者表现出诸多劣势，但Ta们仍然能够创造惊人的成就</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：事实数据轮播 -->
+        <div class="column">
+            <div class="fact-carousel">
+                <div class="fact-item active">
+                    <div class="fact-icon"><i class="fas fa-globe-americas"></i></div>
+                    <p class="fact-content">
+                        全球约<strong>5%</strong>的儿童和<strong>2.5%</strong>的成年人受到ADHD影响。男性被诊断出ADHD的比例是女性的三倍。</p>
+                    <p class="fact-source">来源：世界卫生组织 (WHO)</p>
+                </div>
+                <div class="fact-item">
+                    <div class="fact-icon"><i class="fas fa-graduation-cap"></i></div>
+                    <p class="fact-content">ADHD学生高中辍学率是同龄人的<strong>2.7倍</strong>。但早期干预和支持可显著改善学业表现。</p>
+                    <p class="fact-source">来源：美国疾病控制与预防中心 (CDC)</p>
+                </div>
+                <div class="fact-item">
+                    <div class="fact-icon"><i class="fas fa-lightbulb"></i></div>
+                    <p class="fact-content">研究表明，ADHD人士在创造性思维测试中得分<strong>高出平均水平30%</strong>，在商业创新领域表现突出。</p>
+                    <p class="fact-source">来源：Journal of Creative Behavior</p>
+                </div>
+                <div class="fact-item">
+                    <div class="fact-icon"><i class="fas fa-heartbeat"></i></div>
+                    <p class="fact-content">ADHD人士患焦虑症和抑郁症的风险是普通人群的<strong>3-5倍</strong>。综合治疗应包括心理健康支持。</p>
+                    <p class="fact-source">来源：American Journal of Psychiatry</p>
+                </div>
+                <div class="fact-item">
+                    <div class="fact-icon"><i class="fas fa-briefcase"></i></div>
+                    <p class="fact-content">ADHD成年人的年均收入比同龄人低约<strong>$10,000-$15,000</strong>，但合理的工作环境调整可显著改善职业表现。</p>
+                    <p class="fact-source">来源：Journal of Occupational Medicine</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 左侧图片轮播功能
+        const imageItems = document.querySelectorAll('.image-carousel .carousel-item');
+        const lastImageElement = document.getElementById('last-image'); // 获取最后一个图片元素
+        let currentImageIndex = 0;
+        let imageInterval;
+
+        // 右侧事实轮播功能
+        const factItems = document.querySelectorAll('.fact-carousel .fact-item');
+        let currentFactIndex = 0;
+        let factInterval;
+
+        // 图片轮播函数
+        function showNextImage() {
+            const prevIndex = currentImageIndex;
+
+            imageItems[currentImageIndex].classList.remove('active');
+            imageItems[currentImageIndex].classList.add('prev');
+
+            currentImageIndex = (currentImageIndex + 1) % imageItems.length;
+
+            // 在即将显示最后一张图片前（当前是倒数第二张）替换图片
+            if (currentImageIndex === imageItems.length - 1 &&
+                prevIndex === imageItems.length - 2) {
+                try {
+                    const newImgUrl = window.parent.get_img_url()[0];
+                    if (newImgUrl) {
+                        lastImageElement.src = newImgUrl;
+                    }
+                } catch (e) {
+                    console.warn("无法获取图片URL:", e);
+                }
+            }
+
+            // 检测是否完成了一个完整循环（从最后回到第一张）
+            if (prevIndex === imageItems.length - 1 &&
+                currentImageIndex === 0) {
+                // 发送完成消息给父页面
+                window.parent.postMessage('page_adhd_info_finish', '*');
+            }
+
+            imageItems[currentImageIndex].classList.add('active');
+            setTimeout(() => {
+                imageItems[(currentImageIndex - 1 + imageItems.length) % imageItems.length].classList.remove('prev');
+            }, 1200);
+        }
+
+        // 事实轮播函数
+        function showNextFact() {
+            factItems[currentFactIndex].classList.remove('active');
+
+            currentFactIndex = (currentFactIndex + 1) % factItems.length;
+
+            factItems[currentFactIndex].classList.add('active');
+        }
+
+        // 启动轮播
+        function startCarousels() {
+            imageInterval = setInterval(showNextImage, 5000);
+            factInterval = setInterval(showNextFact, 5000);
+        }
+
+        // 初始化
+        startCarousels();
+    </script>
+</body>
+
+</html>

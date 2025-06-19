@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>动态眼睛加载页</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle, #ffffff 0%, #cccccc 70%, #999999 100%);
+            color: #333;
+            overflow: hidden;
+            position: relative;
+            font-family: 'MyFont', sans-serif;
+        }
+
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_2.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        .eye-container {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            margin-bottom: 40px;
+        }
+
+        .eye-image {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out;
+        }
+
+        .eye-image.active {
+            opacity: 1;
+        }
+
+        .percentage {
+            font-size: 24px;
+            margin-top: 20px;
+            color: #333;
+        }
+
+        .message-container {
+            position: fixed;
+            bottom: 100px;
+            width: 100%;
+            text-align: center;
+            height: 40px;
+        }
+
+        .loading-text {
+            position: absolute;
+            width: 100%;
+            font-size: 16px;
+            color: #666;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out, transform 0.8s ease;
+            transform: translateY(20px);
+        }
+
+        .loading-text.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="eye-container" id="eyeContainer">
+        <!-- 图片将通过JS动态加载 -->
+    </div>
+
+    <div class="percentage">0%</div>
+
+    <div class="message-container">
+        <div class="loading-text">加载数据中</div>
+        <div class="loading-text">佩戴耳机以获取更佳效果</div>
+        <div class="loading-text">你知道吗？ADHD平均发病率在2%-6%</div>
+        <div class="loading-text">注意力无法集中是什么样的体验？</div>
+    </div>
+
+    <script>
+        // 眼睛图片路径
+        const eyeImages = [
+            '../assets/img/eye.webp',
+            '../assets/img/edit.webp',
+            '../assets/img/action.webp',
+            '../assets/img/load.webp',
+            '../assets/img/game.webp',
+        ];
+
+        // 预加载所有图片
+        function preloadImages() {
+            eyeImages.forEach(src => {
+                new Image().src = src;
+            });
+        }
+        preloadImages();
+
+        // 眼睛容器管理
+        const eyeContainer = document.getElementById('eyeContainer');
+        let currentImage = null;
+        let currentIndex = 0; // 用于跟踪当前显示的图片索引
+
+        function createImageElement(src) {
+            const img = new Image();
+            img.src = src;
+            img.className = 'eye-image';
+            return img;
+        }
+
+        function switchImage() {
+            // 创建新图片元素
+            const newImage = createImageElement(eyeImages[currentIndex]);
+
+            // 添加到容器
+            eyeContainer.appendChild(newImage);
+
+            // 如果有当前图片，先移除active类
+            if (currentImage) {
+                currentImage.classList.remove('active');
+            }
+
+            // 给新图片添加active类以触发淡入效果
+            setTimeout(() => {
+                newImage.classList.add('active');
+                currentImage = newImage;
+
+                // 移除旧图片
+                if (currentImage.previousElementSibling) {
+                    setTimeout(() => {
+                        eyeContainer.removeChild(currentImage.previousElementSibling);
+                    }, 800); // 匹配CSS过渡时间
+                }
+            }, 50);
+
+            // 更新索引到下一张图片，当到达数组末尾时循环回0
+            currentIndex = (currentIndex + 1) % eyeImages.length;
+
+            // 设置下一次切换
+            setTimeout(switchImage, 5000);
+        }
+
+        // 延迟开始切换，以确保初始图片已显示
+        switchImage();
+
+        // 百分比计数器
+        let percent = 0;
+        const percentageElement = document.querySelector('.percentage');
+
+        function updatePercentage() {
+            percent = Math.min(percent + 1, 100);
+            percentageElement.textContent = percent + '%';
+            if (percent < 100) {
+                requestAnimationFrame(updatePercentage);
+            }
+        }
+        setTimeout(updatePercentage, 5000);
+
+        // 提示消息管理
+        const messages = document.querySelectorAll('.loading-text');
+        let currentMessage = 0;
+
+        function showNextMessage() {
+            // 隐藏当前消息
+            messages.forEach(msg => msg.classList.remove('active'));
+
+            // 显示下一个消息
+            messages[currentMessage].classList.add('active');
+            currentMessage = (currentMessage + 1) % messages.length;
+
+            // 设置下一条消息显示
+            setTimeout(showNextMessage, 3000);
+        }
+        setTimeout(showNextMessage, 500);
+
+        setTimeout(() => {
+            window.parent.postMessage('page_loading_finish', '*');
+        }, 10000)
+
+        // 监听来自父页面的视线坐标
+        window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            if (data == "action_wait") {
+                setTimeout(() => {
+                    window.parent.postMessage('page_loading_finish', '*');
+                }, 5000)
+            }
+        });
+    </script>
+</body>
+
+</html>

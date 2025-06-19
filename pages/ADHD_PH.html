@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>主题词展示</title>
+    <style>
+        @font-face {
+            font-family: 'MyFont';
+            src: url('../assets/font/font_2.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }
+
+        body {
+            font-family: 'MyFont', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+            overflow: hidden;
+            position: relative;
+            transition: opacity 0.5s ease-out;
+        }
+
+        /* 优化后的句子显示区域 - 在显示最终句子时隐藏 */
+        .sentence-display {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-size: 1.5rem;
+            color: #333;
+            z-index: 100;
+            background-color: #fff;
+            padding: 0 20px;
+            box-sizing: border-box;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border-bottom: 1px solid #eee;
+            overflow: hidden;
+            white-space: nowrap;
+            transition: opacity 0.5s ease-out;
+        }
+
+        /* 新增的最终句子显示区域 */
+        .final-sentence {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2.5rem;
+            color: #333;
+            text-align: center;
+            max-width: 80%;
+            z-index: 200;
+            opacity: 0;
+            transition: opacity 0.8s ease-out;
+            pointer-events: none;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .theme-word {
+            font-size: 3.5rem;
+            color: #333;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+            position: absolute;
+            cursor: pointer;
+            pointer-events: auto;
+            will-change: transform, left, top;
+            transition: all 0.8s cubic-bezier(0.25, 0.1, 0.25, 1);
+        }
+
+        .theme-word.floating {
+            animation: floating 8s ease-in-out infinite;
+        }
+
+        @keyframes floating {
+
+            0%,
+            100% {
+                transform: translateY(0) rotate(0deg);
+            }
+
+            25% {
+                transform: translateY(-15px) rotate(2deg);
+            }
+
+            50% {
+                transform: translateY(0) rotate(0deg);
+            }
+
+            75% {
+                transform: translateY(-10px) rotate(-2deg);
+            }
+        }
+
+        .theme-container {
+            transition: opacity 0.5s ease-out;
+        }
+
+        /* 增强的点击特效画布 */
+        #clickCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .bubble {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.05);
+            border-radius: 50%;
+            animation: bubble-float 15s linear infinite;
+            pointer-events: none;
+        }
+
+        @keyframes bubble-float {
+            0% {
+                transform: translateY(0) scale(0.5);
+                opacity: 0;
+            }
+
+            10% {
+                opacity: 0.1;
+            }
+
+            100% {
+                transform: translateY(-100vh) scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        /* 新增的波纹效果 */
+        .ripple {
+            position: absolute;
+            border-radius: 50%;
+            background-color: rgba(0, 0, 0, 0.1);
+            transform: scale(0);
+            animation: ripple 1.2s ease-out;
+            pointer-events: none;
+        }
+
+        @keyframes ripple {
+            to {
+                transform: scale(4);
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 优化后的句子显示区域 -->
+    <div class="sentence-display" id="sentenceDisplay"></div>
+    <!-- 新增的最终句子显示区域 -->
+    <div class="final-sentence" id="finalSentence"></div>
+    <div class="theme-word floating" id="mainWord">今天</div>
+    <canvas id="clickCanvas"></canvas>
+    <div class="theme-container" id="themeContainer"></div>
+
+    <script>
+        // API设置
+        const API_KEY = "sk-AFrRSiU7ION79Wgvli2SI3wehCaNMBtDBB7kVYk8DQ5Gpubr";
+        const API_URL = "https://api.chatanywhere.tech/v1/chat/completions";
+        const AI_MODEL = "gpt-3.5-turbo";
+        let currentDepth = 0;
+        const MAX_DEPTH = 5; // 最大深度限制
+        // 缓存已经生成过的关键词
+        const keywordCache = {};
+
+        // 提示词模板（要求返回JSON格式）
+        const SYSTEM_PROMPT = `你是一个帮助模拟ADHD患者思维跳跃的助手。用户提供了一个关键词，请生成30个与之相关但思维跳跃的联想关键词。
+    
+    要求:
+    1. 用中文回答
+    2. 严格返回JSON格式: {"keywords": ["关键词1", "关键词2", ...]}
+    3. 每个关键词2-4个汉字
+    4. 避免重复关键词
+    5. 思维发散跳跃（不要逻辑太紧密）
+    6. 包含各种类型（情绪、物品、抽象概念等）
+    7. 包含三个链接词（然后、接下来、嗯 等）
+
+    示例输入："工作"
+    示例输出: {"keywords": ["项目","截止","然后","压力","电脑","接下来","咖啡","错误","升职","嗯","熬夜","邮件","同事","奖金","通勤","项目","截止","会议","压力","电脑","加班","咖啡","错误","升职","办公室","熬夜","邮件","同事","奖金","通勤"]}`;
+
+        // 获取AI生成的关键词
+        async function getAIGeneratedKeywords(inputKeyword) {
+            
+            // 先检查缓存
+            if (keywordCache[inputKeyword]) {
+                return keywordCache[inputKeyword];
+            }
+
+            // 显示加载状态
+            const loadingElement = document.createElement('div');
+            loadingElement.id = 'ai-loading';
+            loadingElement.textContent = '思考中...';
+            loadingElement.style.position = 'fixed';
+            loadingElement.style.top = '50%';
+            loadingElement.style.left = '50%';
+            loadingElement.style.transform = 'translate(-50%, -50%)';
+            loadingElement.style.fontSize = '2rem';
+            loadingElement.style.zIndex = 1000;
+            document.body.appendChild(loadingElement);
+
+            try {
+                const headers = new Headers();
+                headers.append("Authorization", `Bearer ${API_KEY}`);
+                headers.append("Content-Type", "application/json");
+                headers.append("Access-Control-Allow-Origin", "*");
+                headers.append("Access-Control-Allow-Headers", "Authorization, Content-Type");
+
+                const body = JSON.stringify({
+                    model: AI_MODEL,
+                    messages: [
+                        { role: "system", content: SYSTEM_PROMPT },
+                        { role: "user", content: `输入："${inputKeyword}"` }
+                    ]
+                });
+
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers,
+                    body,
+                    redirect: 'follow'
+                });
+
+                const result = await response.json();
+                const content = result.choices[0].message.content;
+
+                // 清理可能存在的错误信息
+                const cleanedContent = content.replace(/^[^{]*/, '');
+
+                // 解析JSON
+                const keywords = JSON.parse(cleanedContent).keywords;
+
+                // 添加到缓存
+                keywordCache[inputKeyword] = keywords;
+
+                return keywords;
+            } catch (error) {
+                console.error('AI请求失败:', error);
+
+                // 使用备用关键词
+                const fallbackKeywords = [
+                    "创意", "灵感", "空白", "走神", "咖啡", "音乐", "窗外",
+                    "时间", "记忆", "想法", "压力", "休息", "错误", "重复", "杂乱"
+                ];
+
+                return fallbackKeywords;
+            } finally {
+                // 移除加载状态
+                if (document.getElementById('ai-loading')) {
+                    document.body.removeChild(loadingElement);
+                }
+            }
+        }
+        const keywordTree = {
+                id: 'today',
+                keyword: '今天',
+                children: [
+                    {
+                        id: 'today_plan',
+                        keyword: '计划',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '很高兴！',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '喜欢',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '21世纪',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '我在想啥？',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '窗外的猫',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '哈哈哈',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '放假！',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: 'gogogo',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: 'MEME',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '很重要',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '演讲',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '主题',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '热',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '打游戏',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '轻微',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '人格',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_plan',
+                        keyword: '自我',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_feelings',
+                        keyword: '心情',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_surrounding',
+                        keyword: '环境',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_random',
+                        keyword: '琐事',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '思绪',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '紧张',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '渴了',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '设计',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '啊啊',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '叽叽喳喳',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '提问',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '加油',
+                        children: [] // AI动态生成
+                    },
+                    {
+                        id: 'today_thoughts',
+                        keyword: '职业',
+                        children: [] // AI动态生成
+                    }
+                ]
+            };
+
+        // 顶部区域高度
+        const TOP_BAR_HEIGHT = 60;
+
+        // 存储用户点击的关键词路径
+        let keywordPath = [];
+
+        // 当前关键词节点
+        let currentNode = keywordTree;
+
+        // 更新句子显示
+        function updateSentenceDisplay() {
+            const display = document.getElementById('sentenceDisplay');
+            display.textContent = keywordPath.join(' ');
+
+            // 如果句子太长，缩小字体
+            if (keywordPath.join('，').length > 30) {
+                display.style.fontSize = '1.2rem';
+            } else {
+                display.style.font极 = '1.5rem';
+            }
+        }
+
+        // 显示最终句子在屏幕中央
+        function showFinalSentence() {
+            const sentenceDisplay = document.getElementById('sentenceDisplay');
+            const finalSentence = document.getElementById('finalSentence');
+
+            // 隐藏顶部路径显示区域
+            sentenceDisplay.style.opacity = '0';
+
+            // 显示最终句子
+            finalSentence.textContent = keywordPath.join(' ');
+            finalSentence.style.opacity = '1';
+
+            // 根据句子长度调整字体大小
+            if (keywordPath.join(' ').length > 20) {
+                finalSentence.style.fontSize = '2rem';
+            } else {
+                finalSentence.style.fontSize = '2.5rem';
+            }
+        }
+
+        // 增强的点击特效
+        function initClickEffect() {
+            let balls = [];
+            let canvas = document.getElementById('clickCanvas');
+            let ctx = canvas.getContext('2d');
+
+            // 调整画布大小
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+
+            // 球类定义 - 增强版
+            class Ball {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.angle = Math.PI * 2 * Math.random();
+                    this.multiplier = randBetween(25, 50);
+                    this.vx = (this.multiplier + Math.random() * 2) * Math.cos(this.angle);
+                    this.vy = (this.multiplier + Math.random() * 2) * Math.sin(this.angle);
+                    this.r = randBetween(8, 15);
+                    this.alpha = 0.8;
+                    this.color = `rgba(${randBetween(0, 50)}, ${randBetween(0, 50)}, ${randBetween(0, 50)}, ${this.alpha})`;
+                    this.decay = 0.1 + Math.random() * 0.1;
+                }
+
+                update() {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.r -= this.decay;
+                    this.alpha -= this.decay * 0.02;
+                    this.vx *= 0.92;
+                    this.vy *= 0.92;
+                }
+            }
+
+            // 生成随机数
+            function randBetween(min, max) {
+                return Math.floor(Math.random() * (max - min + 1)) + min;
+            }
+
+            // 创建粒子 - 增加粒子数量
+            function createBalls(x, y, count) {
+                for (let i = 0; i < count; i++) {
+                    balls.push(new Ball(x, y));
+                }
+            }
+
+            // 动画循环
+            function loop() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                for (let i = 0; i < balls.length; i++) {
+                    let b = balls[i];
+                    if (b.r <= 0 || b.alpha <= 0) continue;
+
+                    ctx.fillStyle = b.color;
+                    ctx.beginPath();
+                    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    b.update();
+                }
+
+                // 移除不可见的球
+                balls = balls.filter(b => b.r > 0 && b.alpha > 0);
+
+                requestAnimationFrame(loop);
+            }
+
+            // 初始化
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            loop();
+
+            // 返回创建粒子的函数 - 增加粒子数量
+            return function (x, y) {
+                createBalls(x, y, randBetween(30, 50));
+                createRippleEffect(x, y);
+            };
+        }
+
+        // 创建波纹效果
+        function createRippleEffect(x, y) {
+            const ripple = document.createElement('div');
+            ripple.classList.add('ripple');
+            ripple.style.left = `${x - 50}px`;
+            ripple.style.top = `${y - 50}px`;
+            ripple.style.width = '100px';
+            ripple.style.height = '100px';
+
+            document.body.appendChild(ripple);
+
+            // 动画结束后移除元素
+            ripple.addEventListener('animationend', () => {
+                ripple.remove();
+            });
+        }
+
+        // 初始化点击特效
+        const createClickEffect = initClickEffect();
+
+        // 创建浮动的小圆点
+        function createBubbles() {
+            const body = document.body;
+            const bubbleCount = 15;
+
+            for (let i = 0; i < bubbleCount; i++) {
+                const bubble = document.createElement('div');
+                bubble.classList.add('bubble');
+
+                // 随机大小
+                const size = Math.random() * 50 + 10;
+                bubble.style.width = `${size}px`;
+                bubble.style.height = `${size}px`;
+
+                // 随机位置
+                bubble.style.left = `${Math.random() * 100}vw`;
+                bubble.style.bottom = `-${size}px`;
+
+                // 随机动画延迟
+                bubble.style.animationDelay = `${Math.random() * 10}s`;
+
+                body.appendChild(bubble);
+            }
+        }
+
+        // 改进的防重叠检查，避开顶部区域
+        function isPositionValid(x, y, width, height, occupiedPositions) {
+            // 检查边界 - 特别注意顶部区域
+            if (x < 0 || y < TOP_BAR_HEIGHT ||
+                x + width > window.innerWidth ||
+                y + height > window.innerHeight) {
+                return false;
+            }
+
+            // 检查与已占用位置的冲突
+            for (const pos of occupiedPositions) {
+                if (x < pos.x + pos.width &&
+                    x + width > pos.x &&
+                    y < pos.y + pos.height &&
+                    y + height > pos.y) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // 移除所有现有关键词（同时消失）
+        function removeAllKeywords() {
+            const container = document.getElementById('themeContainer');
+            container.style.opacity = '0';
+
+            setTimeout(() => {
+                container.innerHTML = '';
+                container.style.opacity = '1';
+            }, 100);
+        }
+
+        // 从点击位置生成相关关键词
+        async function generateRelatedKeywords(clickX, clickY) {
+            // 检查是否达到最大深度
+            if (currentDepth >= MAX_DEPTH) {
+                showFinalSentence();
+                setTimeout(() => {
+                    window.parent.postMessage('page_adhd_ph_finish', '*');
+                }, 2000);
+                return;
+            }
+
+            // 增加深度计数
+            currentDepth++;
+            
+            const container = document.getElementById('themeContainer');
+            const finalSentence = document.getElementById('finalSentence');
+            const sentenceDisplay = document.getElementById('sentenceDisplay');
+
+            // 隐藏最终句子
+            finalSentence.style.opacity = '0';
+
+            // 确保顶部路径显示区域可见
+            sentenceDisplay.style.opacity = '1';
+
+            // 获取屏幕尺寸，减去顶部区域高度
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight - TOP_BAR_HEIGHT;
+
+            // 记录已占用的位置
+            const occupiedPositions = [];
+
+            // 重置容器透明度
+            container.style.opacity = '1';
+
+            // 生成当前节点的所有子节点
+            let children = currentNode.children || [];
+
+            // 如果子节点为空，则动态生成
+            if (children.length === 0) {
+                try {
+                    const keywords = await getAIGeneratedKeywords(currentNode.keyword);
+
+                    // 将关键词转换为节点
+                    children = keywords.map((keyword, index) => ({
+                        id: `${currentNode.id}_child${index}`,
+                        keyword,
+                        children: [] // 下一层级在点击时生成
+                    }));
+
+                    // 更新当前节点
+                    currentNode.children = children;
+                } catch (error) {
+                    console.error('生成关键词失败:', error);
+                    // 使用备用关键词
+                    children = [
+                        { id: 'fallback_1', keyword: '出错', children: [] },
+                        { id: 'fallback_2', keyword: '重试', children: [] }
+                    ];
+                }
+            }
+
+            // 如果没有子节点，则显示最终句子
+            if (children.length === 0) {
+                showFinalSentence();
+                setTimeout(() => {
+                    window.parent.postMessage('page_adhd_ph_finish', '*');
+                }, 1000);
+                return;
+            }
+
+            // 生成关联关键词
+            const words = [];
+            for (let i = 0; i < children.length; i++) {
+                const childNode = children[i];
+                const keyword = childNode.keyword;
+
+                // 随机大小 (2rem - 4rem)
+                const fontSize = Math.random() * 2 + 2;
+                const word = document.createElement('div');
+                word.classList.add('theme-word');
+                word.textContent = keyword;
+                word.style.fontSize = `${fontSize}rem`;
+                word.style.left = `${clickX}px`;
+                word.style.top = `${clickY}px`;
+                word.style.opacity = '0';
+
+                // 添加点击事件 - 增强反馈
+                word.addEventListener('click', function (e) {
+                    // 增强点击效果
+                    word.style.transform = 'scale(1.2)';
+                    setTimeout(() => {
+                        word.style.transform = 'scale(1)';
+                    }, 200);
+
+                    // 移动到选中的节点
+                    currentNode = childNode;
+
+                    // 记录点击的关键词
+                    keywordPath.push(keyword);
+                    updateSentenceDisplay();
+
+                    // 创建点击特效
+                    createClickEffect(e.clientX, e.clientY);
+
+                    // 移除所有现有关键词
+                    removeAllKeywords();
+
+                    // 从点击位置生成新关键词
+                    setTimeout(() => {
+                        generateRelatedKeywords(e.clientX, e.clientY);
+                    }, 200);
+                });
+
+                container.appendChild(word);
+
+                // 测量实际大小
+                const rect = word.getBoundingClientRect();
+                const wordWidth = rect.width;
+                const wordHeight = rect.height;
+
+                // 尝试找到合适的位置 - 避开顶部区域
+                let validPosition = null;
+                let attempts = 0;
+                const maxPositionAttempts = 100;
+
+                while (!validPosition && attempts < maxPositionAttempts) {
+                    attempts++;
+
+                    // 随机位置 - 确保y坐标在顶部区域下方
+                    const x = Math.random() * (screenWidth - wordWidth);
+                    const y = Math.random() * (screenHeight - wordHeight) + TOP_BAR_HEIGHT;
+
+                    // 检查位置是否有效
+                    if (isPositionValid(x, y, wordWidth, wordHeight, occupiedPositions)) {
+                        validPosition = { x, y };
+                        occupiedPositions.push({
+                            x,
+                            y,
+                            width: wordWidth,
+                            height: wordHeight
+                        });
+                    }
+                }
+
+                if (!validPosition) {
+                    word.remove();
+                    continue;
+                }
+
+                words.push({
+                    element: word,
+                    targetX: validPosition.x,
+                    targetY: validPosition.y,
+                    width: wordWidth,
+                    height: wordHeight
+                });
+            }
+
+            // 动画显示所有词
+            setTimeout(() => {
+                words.forEach((word) => {
+                    word.element.style.opacity = '1';
+                    word.element.style.left = `${word.targetX}px`;
+                    word.element.style.top = `${word.targetY}px`;
+
+                    // 动画结束后添加浮动效果
+                    setTimeout(() => {
+                        word.element.classList.add('floating');
+                        word.element.style.animationDelay = `${Math.random() * 5}s`;
+                    }, 0);
+                });
+            }, 0);
+        }
+
+        // 页面加载后创建小圆点
+        window.addEventListener('load', () => {
+            createBubbles();
+
+            // 为主词添加点击事件 - 增强反馈
+            document.getElementById('mainWord').addEventListener('click', function (e) {
+                // 重置深度计数器
+                currentDepth = 0;
+
+                // 增强点击效果
+                this.style.transform = 'scale(1.2)';
+                setTimeout(() => {
+                    this.style.transform = 'scale(1)';
+                }, 200);
+
+                // 移动到根节点
+                currentNode = keywordTree;
+                
+                // 记录根节点关键词
+                keywordPath = ['今天'];
+                updateSentenceDisplay();
+
+                createClickEffect(e.clientX, e.clientY);
+
+                // 禁用主词点击，防止重复触发
+                this.style.pointerEvents = 'none';
+
+                // 淡出主词
+                this.style.transition = 'opacity 0.5s ease-out, transform 0.2s ease-out';
+                this.style.opacity = '0';
+
+                // 重置最终句子状态
+                document.getElementById('finalSentence').style.opacity = '0';
+
+                // 确保顶部路径显示区域可见
+                document.getElementById('sentenceDisplay').style.opacity = '1';
+
+                // 从中心位置生成新关键词
+                setTimeout(() => {
+                    this.style.display = 'none';
+                    generateRelatedKeywords(e.clientX, e.clientY);
+                }, 100);
+            });
+        });
+
+        // 窗口大小改变时重新布局
+        window.addEventListener('resize', function () {
+            const container = document.getElementById('themeContainer');
+            if (container && container.children.length > 0) {
+                // 移除所有现有关键词
+                removeAllKeywords();
+
+                // 从中心位置生成新关键词
+                setTimeout(() => {
+                    const centerX = window.innerWidth / 2;
+                    const centerY = window.innerHeight / 2;
+                    generateRelatedKeywords(centerX, centerY);
+                }, 100);
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Mouse-Controlled Camera平移场景</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            background: #87CEEB;
+        }
+    </style>
+</head>
+
+<body>
+    <script src="/assets/js/three.js/three.min.js"></script>
+    <script src="/assets/js/three.js/GLTFLoader.js"></script>
+    <script src="/assets/js/three.js/RGBELoader.js"></script>
+    <script src="/assets/js/three.js/draco_decoder.js"></script>
+    <script src="/assets/js/three.js/DRACOLoader.js"></script>
+
+    <script>
+        // 初始化渲染器
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            powerPreference: "high-performance"
+        });
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 创建场景并加载HDR环境
+        const scene = new THREE.Scene();
+        new THREE.RGBELoader()
+            .setDataType(THREE.UnsignedByteType)
+            .load('/assets/3D/hdr/studio.hdr',
+                (texture) => {
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    scene.environment = texture;
+                    // scene.background = texture;
+                },
+                undefined,
+                (err) => console.error('HDR加载失败:', err)
+            );
+
+        // 创建透视相机
+        const camera = new THREE.PerspectiveCamera(
+            50,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        camera.position.set(2, 2, 5);
+
+        // 初始化加载器
+        const loader = new THREE.GLTFLoader();
+        const dracoLoader = new THREE.DRACOLoader();
+        dracoLoader.setDecoderPath('/assets/google/');
+        loader.setDRACOLoader(dracoLoader);
+
+        // 加载模型
+        loader.load(
+            '/assets/3D/module/camera.gltf',
+            (gltf) => {
+                const model = gltf.scene;
+                model.position.set(0, 2.5, -10);
+                model.scale.set(5, 5, 5);
+                model.rotation.x = 0.2;
+                scene.add(model);
+                console.log('相机加载成功');
+            },
+            undefined,
+            (error) => {
+                console.error('相机加载失败:', error);
+            }
+        );
+
+        // 加载墙面材质贴图
+        const textureLoader = new THREE.TextureLoader();
+        const wallTextures = {
+            diffuse: textureLoader.load('/assets/3D/texture/stone_wall/stone_tile_wall_diff_1k.jpg'),
+            normal: textureLoader.load('/assets/3D/texture/stone_wall/stone_tile_wall_nor_gl_1k.jpg'),
+            displacement: textureLoader.load('/assets/3D/texture/stone_wall/stone_tile_wall_disp_1k.jpg'),
+            arm: textureLoader.load('/assets/3D/texture/stone_wall/stone_tile_wall_arm_1k.jpg')
+        };
+
+        // 创建墙面材质
+        const wallMaterial = new THREE.MeshStandardMaterial({
+            map: wallTextures.diffuse,
+            normalMap: wallTextures.normal,
+            displacementMap: wallTextures.displacement,
+            aoMap: wallTextures.arm,
+            roughnessMap: wallTextures.arm,
+            metalnessMap: wallTextures.arm,
+            displacementScale: 0.1,
+            roughness: 0.8,
+            metalness: 0.2,
+            normalScale: new THREE.Vector2(1, -1),
+            aoMapIntensity: 1
+        });
+
+        // 设置贴图通道（根据ARM贴图的通道分配）
+        wallMaterial.aoMap.channel = 0;    // 红色通道：AO
+        wallMaterial.roughnessMap.channel = 1; // 绿色通道：Roughness
+        wallMaterial.metalnessMap.channel = 2; // 蓝色通道：Metalness
+
+        // 创建带贴图的墙面
+        function createWall(size, position) {
+            const geometry = new THREE.BoxGeometry(...size);
+            // 复制UV坐标到第二组UV（用于AO贴图）
+            geometry.setAttribute('uv2', new THREE.BufferAttribute(geometry.attributes.uv.array, 2));
+
+            const wall = new THREE.Mesh(geometry, wallMaterial);
+            wall.position.set(...position);
+            wall.receiveShadow = true;
+            wall.castShadow = true;
+            return wall;
+        }
+
+        // 添加带贴图的墙体
+        scene.add(createWall([20, 0.2, 30], [0, -0.1, 0])); // 地板
+        scene.add(createWall([20, 0.2, 30], [0, 7, 0]));    // 天花板
+        scene.add(createWall([20, 10, 0.2], [0, 2, -15]));  // 后墙
+        scene.add(createWall([0.2, 10, 30], [-10, 2, 0]));  // 左墙
+        scene.add(createWall([0.2, 10, 30], [10, 2, 0]));   // 右墙
+
+        // 光照系统
+        const ceilingLight = new THREE.PointLight(0xffffff, 1);
+        ceilingLight.position.set(0, 4, 0);
+        ceilingLight.intensity = 1;
+        ceilingLight.distance = 100;
+        ceilingLight.decay = 0.1;
+        ceilingLight.power = 10;
+        scene.add(ceilingLight);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 1);
+        scene.add(ambient);
+
+        // 在光照系统定义之后添加以下代码
+        function generateRandomGlowingObject() {
+            // 随机选择几何体类型（增加更多形状）
+            const geometryTypes = [
+                () => new THREE.BoxGeometry(1, 1, 1),
+                () => new THREE.SphereGeometry(0.5, 32, 32),
+                () => new THREE.ConeGeometry(0.5, 2, 32),
+                () => new THREE.TorusGeometry(0.5, 0.2, 16, 100),
+                () => new THREE.OctahedronGeometry(0.8),
+                () => new THREE.DodecahedronGeometry(0.6)
+            ];
+
+            // 改进的颜色生成（使用HSL避免白色）
+            const hue = Math.random(); // 0-1
+            const saturation = 0.7 + Math.random() * 0.3; // 保持高饱和度
+            const lightness = 0.3 + Math.random() * 0.4; // 限制亮度范围（0.3-0.7）
+            const color = new THREE.Color().setHSL(hue, saturation, lightness);
+            const intensity = THREE.MathUtils.randFloat(0.8, 2.5);
+
+            // 创建随机几何体（保持最小尺寸）
+            const size = THREE.MathUtils.randFloat(0.8, 2.2);
+            const geometry = geometryTypes[Math.floor(Math.random() * geometryTypes.length)]()
+                .scale(size, size, size);
+
+            // 增强自发光材质
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: color.clone().multiplyScalar(intensity),
+                emissiveIntensity: intensity,
+                metalness: 0.15,
+                roughness: 0.35,
+            });
+
+            // 创建网格对象
+            const object = new THREE.Mesh(geometry, material);
+            object.castShadow = true;
+            object.receiveShadow = true;
+
+            // 设置初始位置（避开墙体）
+            object.position.set(
+                THREE.MathUtils.randFloatSpread(16),  // X范围：-8到8
+                THREE.MathUtils.randFloat(1.5, 5.5),  // Y范围：1.5-5.5
+                THREE.MathUtils.randFloat(-13, 13)    // Z范围：-13到13
+            );
+
+            // 添加运动参数（包含速度和边界范围）
+            object.userData = {
+                velocity: new THREE.Vector3(
+                    THREE.MathUtils.randFloat(-0.015, 0.015),
+                    THREE.MathUtils.randFloat(-0.01, 0.01),
+                    THREE.MathUtils.randFloat(-0.015, 0.015)
+                ),
+                rotationSpeed: new THREE.Vector3(
+                    THREE.MathUtils.randFloat(-0.02, 0.02),
+                    THREE.MathUtils.randFloat(-0.03, 0.03),
+                    THREE.MathUtils.randFloat(-0.015, 0.015)
+                ),
+                bounds: {
+                    x: [-8, 8],    // 根据房间尺寸调整
+                    y: [1, 6],     // 垂直移动范围
+                    z: [-14, 14]   // 前后移动范围
+                }
+            };
+
+            // 添加到场景
+            scene.add(object);
+
+            // 自动移除机制（延长存在时间）
+            setTimeout(() => {
+                scene.remove(object);
+                geometry.dispose();
+                material.dispose();
+            }, 30000); // 30秒后移除
+
+            return object;
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'g' || e.key === 'G') {
+                generateRandomGlowingObject();
+            }
+        });
+
+        const MOVEMENT = {
+            speed: 0.8,
+            xRange: [-8, 8],
+            yRange: [0, 3]
+        };
+        // 在文件头部添加平滑参数
+        const SMOOTHING = {
+            position: {
+                factor: 0.28,      // 位置平滑系数
+                maxSpeed: 0.02    // 位置最大速度
+            },
+            rotation: {
+                factor: 0.22,      // 旋转平滑系数
+                maxAngle: 0.05    // 每帧最大旋转角度(弧度)
+            }
+        };
+        // 改进的mouse对象结构
+        const mouse = {
+            position: {
+                current: { x: 0, y: 0 },
+                target: { x: 0, y: 0 }
+            },
+            rotation: {
+                current: { x: 0, y: 0 },
+                target: { x: 0, y: 0 }
+            }
+        };
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // 新增旋转参数
+        const ROTATION = {
+            sensitivity: 0.2,
+            maxHorizontal: 0.7,
+            maxVertical: 0.7
+        };
+
+        // 修改后的animate函数
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 位置平滑过渡（带速度限制）
+            mouse.position.current.x += THREE.MathUtils.clamp(
+                (mouse.position.target.x - mouse.position.current.x) * SMOOTHING.position.factor,
+                -SMOOTHING.position.maxSpeed,
+                SMOOTHING.position.maxSpeed
+            );
+            mouse.position.current.y += THREE.MathUtils.clamp(
+                (mouse.position.target.y - mouse.position.current.y) * SMOOTHING.position.factor,
+                -SMOOTHING.position.maxSpeed,
+                SMOOTHING.position.maxSpeed
+            );
+
+            // 旋转平滑过渡（角度限制）
+            mouse.rotation.current.x += THREE.MathUtils.clamp(
+                (mouse.rotation.target.x - mouse.rotation.current.x) * SMOOTHING.rotation.factor,
+                -SMOOTHING.rotation.maxAngle,
+                SMOOTHING.rotation.maxAngle
+            );
+            mouse.rotation.current.y += THREE.MathUtils.clamp(
+                (mouse.rotation.target.y - mouse.rotation.current.y) * SMOOTHING.rotation.factor,
+                -SMOOTHING.rotation.maxAngle,
+                SMOOTHING.rotation.maxAngle
+            );
+            // 更新所有发光体的位置和旋转
+            scene.children.forEach(child => {
+                if (child.userData?.velocity) {
+                    // 位置更新（带边界反弹）
+                    child.position.add(child.userData.velocity);
+
+                    // X轴边界检测
+                    if (child.position.x < child.userData.bounds.x[0] ||
+                        child.position.x > child.userData.bounds.x[1]) {
+                        child.userData.velocity.x *= -1;
+                    }
+
+                    // Y轴边界检测
+                    if (child.position.y < child.userData.bounds.y[0] ||
+                        child.position.y > child.userData.bounds.y[1]) {
+                        child.userData.velocity.y *= -1;
+                    }
+
+                    // Z轴边界检测
+                    if (child.position.z < child.userData.bounds.z[0] ||
+                        child.position.z > child.userData.bounds.z[1]) {
+                        child.userData.velocity.z *= -1;
+                    }
+
+                    // 旋转更新
+                    child.rotation.x += child.userData.rotationSpeed.x;
+                    child.rotation.y += child.userData.rotationSpeed.y;
+                    child.rotation.z += child.userData.rotationSpeed.z;
+
+                    // 随机速度微调（模拟自然运动）
+                    if (Math.random() < 0.02) {
+                        child.userData.velocity.add(
+                            new THREE.Vector3(
+                                THREE.MathUtils.randFloat(-0.002, 0.002),
+                                THREE.MathUtils.randFloat(-0.001, 0.001),
+                                THREE.MathUtils.randFloat(-0.002, 0.002)
+                            ));
+                    }
+                }
+            });
+            // 应用位置计算
+            const targetX = mouse.position.current.x * MOVEMENT.speed;
+            const targetY = mouse.position.current.y * MOVEMENT.speed + 2;
+            camera.position.x = THREE.MathUtils.clamp(targetX, ...MOVEMENT.xRange);
+            camera.position.y = THREE.MathUtils.clamp(targetY, ...MOVEMENT.yRange);
+
+            // 应用旋转计算（四元数插值优化）
+            const targetQuaternion = new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(
+                    THREE.MathUtils.clamp(-mouse.rotation.current.x, -ROTATION.maxVertical, ROTATION.maxVertical),
+                    THREE.MathUtils.clamp(mouse.rotation.current.y, -ROTATION.maxHorizontal, ROTATION.maxHorizontal),
+                    0,
+                    'YXZ'
+                )
+            );
+            camera.quaternion.slerp(targetQuaternion, SMOOTHING.rotation.factor * 2);
+            
+            renderer.render(scene, camera);
+        }
+
+        // 窗口自适应
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+        window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            console.log(data);
+            if (data.type === "face_point") {
+                const FACIAL_SENSITIVITY = { x: 2.2, y: 2.0 };
+
+                // 更新位置目标值（带双阶段平滑）
+                mouse.position.target.x = THREE.MathUtils.lerp(
+                    mouse.position.target.x,
+                    THREE.MathUtils.clamp(((data.x * 2 - 1) * -1) * FACIAL_SENSITIVITY.x, -1, 1),
+                    SMOOTHING.position.factor
+                );
+
+                mouse.position.target.y = THREE.MathUtils.lerp(
+                    mouse.position.target.y,
+                    THREE.MathUtils.clamp(((data.y * 2 - 1) * -1) * FACIAL_SENSITIVITY.y, -1, 1),
+                    SMOOTHING.position.factor
+                );
+
+                // 更新旋转目标值（独立计算）
+                mouse.rotation.target.x = mouse.position.target.y * ROTATION.sensitivity;
+                mouse.rotation.target.y = mouse.position.target.x * ROTATION.sensitivity;
+            }
+        });
+
+        setTimeout(() => {
+            window.parent.postMessage('webcam_face', '*');
+        }, 1500);
+
+
+        setInterval(() => {
+            // generateRandomGlowingObject();
+        }, 500);
+        
+        setTimeout(() => {
+            window.parent.postMessage('page_adhd_c_finish', '*');
+        }, 10000);
+    </script>
+</body>
+
+</html>

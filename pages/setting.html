@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Tracking Setup</title>
+    <style>
+        :root {
+            --primary: #000000;
+            --primary-hover: #000000;
+            --background: #f9fafb;
+            --card-bg: #ffffff;
+            --text: #2d3748;
+            --text-secondary: #718096;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--text);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            padding: 2rem;
+            box-sizing: border-box;
+        }
+
+        /* 摄像头预览样式 */
+        .camera-preview {
+            position: relative;
+            width: 300px;
+            height: 300px;
+            margin: 2rem auto;
+            border-radius: 50%;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            background: #e2e8f0;
+        }
+
+        #webcam,
+        .output_canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        /* 步骤卡片样式 */
+        .step-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s ease;
+        }
+
+        .step-card.active {
+            border-left: 4px solid var(--primary);
+        }
+
+        .step-card.completed {
+            opacity: 0.7;
+        }
+
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .step-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .step-status {
+            font-size: 0.9rem;
+            padding: 4px 8px;
+            border-radius: 20px;
+            background: #e2e8f0;
+            color: var(--text-secondary);
+        }
+
+        .step-description {
+            color: var(--text-secondary);
+            margin: 0.5rem 0;
+            font-size: 0.95rem;
+        }
+
+        /* 按钮样式 */
+        .mdc-button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .mdc-button:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+        }
+
+        .mdc-button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+        }
+
+        /* 校准UI */
+        #calibrationInstruction {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            text-align: center;
+            z-index: 1000;
+            display: none;
+        }
+
+        #calibrationPoint {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            background: #ff4757;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 1001;
+        }
+
+        #gazePoint {
+            position: fixed;
+            width: 15px;
+            height: 15px;
+            background: #5e6ad2;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 999;
+            pointer-events: none;
+        }
+        /* 新增步骤控制样式 */
+        .step-card {
+            display: none;
+        }
+        .step-card.active {
+            display: block;
+        }
+        .nav-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1 style="text-align: center; margin: 2rem 0;">前置设置</h1>
+
+        <!-- 摄像头预览 -->
+        <div class="camera-preview">
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+
+        <!-- 修改后的步骤卡片 -->
+        <div class="step-card active" id="step1">
+            <div class="step-header">
+                <div class="step-title">步骤1：启用摄像头并加载模型</div>
+                <div class="step-status">等待中</div>
+            </div>
+            <p class="step-description">请允许浏览器访问您的摄像头以继续设置。</p>
+            <div class="nav-group">
+                <button id="webcamButton" class="mdc-button">启用摄像头</button>
+            </div>
+        </div>
+        
+        <div class="step-card" id="step2">
+            <div class="step-header">
+                <div class="step-title">步骤2：眼动校准</div>
+                <div class="step-status">未就绪</div>
+            </div>
+            <p class="step-description">请跟随屏幕上的红点进行校准以获得最佳跟踪效果。</p>
+            <div class="nav-group">
+                <button id="calibrateButton" class="mdc-button">开始校准</button>
+            </div>
+        </div>
+        
+        <div class="step-card" id="step3">
+            <div class="step-header">
+                <div class="step-title">步骤3：完成设置</div>
+                <div class="step-status">不可用</div>
+            </div>
+            <p class="step-description">确认设置完成或重新开始校准。</p>
+            <div class="nav-group">
+                <button id="clearCalibrationButton" class="mdc-button">重新校准</button>
+                <button id="completeButton" class="mdc-button">完成设置</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 步骤控制逻辑
+        let currentStep = 1;
+        function showStep(step) {
+            document.querySelectorAll('.step-card').forEach(card => {
+                card.classList.remove('active');
+            });
+            document.getElementById(`step${step}`).classList.add('active');
+            currentStep = step;
+        }
+        // 处理按键事件
+        function handleKeyPress(event) {
+            if (event.key === ' ') {
+                document.getElementById("calibrateButton").blur(); 
+                window.parent.postMessage("set_foucs", '*');
+                // 移除按键监听
+                document.removeEventListener('keydown', handleKeyPress);
+            }
+        }
+        // 第一步逻辑
+        document.getElementById('webcamButton').addEventListener('click', () => {
+            // 启用摄像头成功后启用下一步
+            // window.parent.postMessage('webcam', '*');
+            window.parent.postMessage('load_module_now', '*');
+        });
+
+        // 第二步逻辑
+        document.getElementById('calibrateButton').addEventListener('click', () => {
+            // 校准完成后启用下一步
+            window.parent.postMessage('startcalibration', '*');
+        });
+
+        // 第三步逻辑
+        document.getElementById('clearCalibrationButton').addEventListener('click', () => {
+            showStep(1);
+            // 重置第一步状态
+            document.getElementById('webcamButton').click(); // 自动重新启用摄像头
+        });
+
+        document.getElementById('completeButton').addEventListener('click', () => {
+            window.parent.postMessage('next_page_PI', '*');
+            window.parent.postMessage('webcam', '*');
+            window.parent.postMessage('page_setting_finish', '*');
+        });
+
+        // 监听来自父页面的视线坐标
+        window.addEventListener('message', function (event) {
+            if (event.origin !== window.location.origin) return;
+            const data = event.data;
+            console.log(data);
+            if (data == "finish_calibration") {
+                // 监听空格键
+                showStep(3);
+            }
+            if (data == "finish_webcam") {
+                document.addEventListener('keydown', handleKeyPress);
+                window.parent.postMessage('video_frame', '*');
+                window.parent.postMessage('webcam', '*');
+                showStep(2);
+            }
+        });
+    </script>
+    </body>
+    
+    </html>
