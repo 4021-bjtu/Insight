@@ -413,6 +413,7 @@
                         }
                     });
                     video.srcObject = stream;
+                    await video.play(); // 确保播放
                     rafManager.add(face_predictWebcam);
                 } catch (err) {
                     console.error("Error accessing webcam: ", err);
@@ -449,6 +450,8 @@
                         }
                     });
                     video.srcObject = stream;
+                    
+                    await video.play(); // 确保播放
                     rafManager.add(predictWebcam);
                 } catch (err) {
                     console.error("Error accessing webcam: ", err);
@@ -831,6 +834,8 @@
             if (!webcamRunning || !video.videoWidth) return;
 
             let startTimeMs = performance.now();
+            console.log(video.currentTime, lastGazeDetectionTime);
+
             if (video.currentTime !== lastGazeDetectionTime) {
                 lastGazeDetectionTime = video.currentTime;
 
@@ -841,7 +846,6 @@
                     return;
                 }
             }
-
             if (results && results.faceLandmarks) {
                 for (const landmarks of results.faceLandmarks) {
                     calculateGaze(landmarks);
@@ -887,7 +891,7 @@
         async function preloadModels() {
             if (isPreloading) return;
             isPreloading = true;
-
+            
             console.log('开始预加载模型...');
 
             try {
@@ -896,10 +900,10 @@
                 const stream1 = await navigator.mediaDevices.getUserMedia({
                     video: { width: 320, height: 240 } // 性能优化：使用较小分辨率
                 });
+                
                 const tempVideo1 = document.createElement('video');
                 tempVideo1.srcObject = stream1;
                 tempVideo1.muted = true;
-
                 await new Promise(resolve => {
                     tempVideo1.onloadedmetadata = () => {
                         face_enableCam();
